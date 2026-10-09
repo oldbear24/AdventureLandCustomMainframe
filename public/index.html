@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adventure Land · Mainframe</title>
+  <link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="toast" role="status" hidden></div>
+  <main id="login" class="login">
+    <div class="logo">AL<span>▧</span></div><p class="eyebrow">YOUR SERVER. YOUR ADVENTURE.</p>
+    <h1>Vlastní mainframe.</h1><p class="muted">Postavy online. Kód pod kontrolou.</p>
+    <form id="login-form"><label for="password">Heslo správce</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="primary" type="submit">Otevřít mainframe <span>→</span></button><p id="login-error" class="error" role="alert"></p></form>
+    <p class="fine">ADVENTURE LAND / SELF-HOSTED CONTROL ROOM</p>
+  </main>
+  <div id="panel" hidden>
+    <aside>
+      <div class="brand"><div class="logo small">AL<span>▧</span></div><div><strong>Mainframe</strong><small>ADVENTURE LAND</small></div></div>
+      <div class="nav"><span class="nav-active">▦ &nbsp; Řídicí panel</span><a href="https://adventure.land/" target="_blank" rel="noopener noreferrer">↗ &nbsp; Otevřít hru</a><a href="https://adventure.land/docs" target="_blank" rel="noopener noreferrer">⌘ &nbsp; CODE dokumentace</a></div>
+      <div class="aside-bottom"><span class="dot"></span> Vlastní infrastruktura<small id="uptime"></small><button id="logout" class="ghost">Odhlásit se ↗</button></div>
+    </aside>
+    <main class="workspace">
+      <header><div><p class="eyebrow">CONTROL ROOM <span>/ LIVE</span></p><h1>Tvoje dobrodružství.<br><span>V nepřetržitém provozu.</span></h1></div><div class="server-pill"><span class="dot"></span> SELF-HOSTED</div></header>
+      <div id="auth-warning" class="notice" hidden>Nastav AL_AUTH_COOKIE v .env a restartuj server, aby šlo připojit postavy.</div>
+      <section class="stats" aria-label="Přehled"><div><p>AKTIVNÍ POSTAVY</p><strong id="stat-online">0<span>/ 4</span></strong><small>Samostatné herní relace</small></div><div><p>CODE SKRIPTY</p><strong id="stat-scripts">0</strong><small>Uloženo na tvém serveru</small></div><div><p>CELKEM GOLD</p><strong id="stat-gold">—</strong><small>Z připojených postav</small></div><div><p>STAV SPOJENÍ</p><strong id="stat-status" class="status-value">Připraveno</strong><small id="last-update">Čekám na data</small></div></section>
+      <section class="section"><div class="section-head"><div><h2>Postavy <span id="character-count">00</span></h2><p>Spouštění, stav a ovládání tvého týmu.</p></div><button id="add-character" class="primary">+ Přidat postavu</button></div><div id="characters" class="character-grid"></div></section>
+      <section class="lower-grid"><div class="surface editor-panel"><div class="section-head"><div><p class="eyebrow">WORKSPACE</p><h2>CODE editor</h2></div><button id="new-script" class="ghost">+ Nový</button></div><label for="script-picker" class="sr-only">Vybrat skript</label><select id="script-picker"><option value="">Nový skript</option></select><label for="script-name">Název skriptu</label><input id="script-name" placeholder="např. warrior-farm"><label for="script-source">JavaScript CODE</label><textarea id="script-source" spellcheck="false" placeholder="// Sem vlož svůj Adventure Land CODE."></textarea><div class="editor-footer"><span id="editor-note">Uložení nemění běžící CODE.</span><button id="save-script" class="primary">Uložit skript</button></div><button id="delete-script" class="ghost danger" hidden>Smazat skript</button></div>
+      <div class="surface log-panel"><div class="section-head"><div><p class="eyebrow">TELEMETRY</p><h2>Živé logy <span class="live-dot"></span></h2></div><label for="log-filter" class="sr-only">Filtrovat logy</label><select id="log-filter"><option value="all">Všechny postavy</option><option value="system">Systém</option></select></div><div id="logs" class="logs" role="log" aria-label="Herní logy"></div><div class="log-footer">Posledních 150 záznamů · obnova každých 5 sekund</div></div></section>
+      <footer>ADVENTURE LAND CUSTOM MAINFRAME <span>Built to keep your party moving.</span></footer>
+    </main>
+  </div>
+  <dialog id="character-dialog"><form id="character-form"><div class="section-head"><h2 id="dialog-title">Přidat postavu</h2><button type="button" id="close-dialog" class="ghost" aria-label="Zavřít">×</button></div><input type="hidden" id="character-id"><label for="character-name">Jméno postavy ve hře</label><input id="character-name" pattern="[a-zA-Z0-9_]{1,32}" required maxlength="32"><div class="form-row"><div><label for="character-region">Region</label><select id="character-region"><option>EU</option><option>US</option><option>ASIA</option></select></div><div><label for="character-server">Server</label><input id="character-server" value="I" required pattern="[a-zA-Z0-9_-]{1,24}" maxlength="24"></div></div><label for="character-script">Skript</label><select id="character-script"><option value="">Bez CODE</option></select><label class="check"><input id="character-autostart" type="checkbox">Spustit automaticky při startu serveru</label><p class="fine">Před spuštěním odpoj postavu z ostatních klientů. Po přidání ji spustíš tlačítkem Start.</p><button class="primary" type="submit">Uložit postavu</button></form></dialog>
+</body>
+</html>

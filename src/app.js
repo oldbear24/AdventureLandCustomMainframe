@@ -1,0 +1,148 @@
+import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { z } from 'zod';
+import { characterSchema, scriptSchema } from './store.js';
+
+const publicDir = fileURLToPath(new URL('../public', import.meta.url));
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+export function createApp(config, store, runtime) {
+  const app = express(); app.disable('x-powered-by');
+  const sessions = new Map(), attempts = new Map();
+  const salt = randomBytes(32), passwordHash = scryptSync(config.password, salt, 64);
+  const cleanup = setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of sessions) if (value.expires < now) sessions.delete(key);
+    for (const [key, value] of attempts) if (value.until < now) attempts.delete(key);
+  }, 60_000); cleanup.unref();
+  app.locals.dispose = () => clearInterval(cleanup);
+  app.use((req, res, next) => {
+    res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" });
+    next();
+  });
+  app.get('/healthz', (_req, res) => res.json({ ok: true }));
+  app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+      const expected = config.publicOrigin || `${config.cookieSecure ? 'https' : 'http'}://${req.get('host')}`;
+      if (req.get('origin') !== expected) return res.status(403).json({ error: 'Neplatný Origin. Použij panel nebo nastav PUBLIC_ORIGIN.' });
+      if (!req.is('application/json')) return res.status(415).json({ error: 'Vyžadováno application/json.' });
+    }
+    next();
+  });
+  app.use(express.json({ limit: '1mb' }));
+  const cookieOptions = { httpOnly: true, secure: config.cookieSecure, sameSite: 'strict', path: '/', maxAge: 12 * 60 * 60 * 1000 };
+  const sessionFor = req => {
+    const token = (req.get('cookie') || '').split(';').map(c => c.trim()).find(c => c.startsWith('mf_session='))?.slice(11);
+    const session = token && sessions.get(token);
+    if (!session || session.expires < Date.now()) { if (token) sessions.delete(token); return null; }
+    return { token, ...session };
+  };
+  app.post('/api/login', (req, res) => {
+    const password = z.object({ password: z.string().max(1024) }).parse(req.body).password;
+    const key = req.ip;
+    const counter = attempts.get(key) || { count: 0, until: Date.now() + 15 * 60 * 1000 };
+    if (counter.until < Date.now()) { counter.count = 0; counter.until = Date.now() + 15 * 60 * 1000; }
+    if (counter.count >= 10) { res.set('Retry-After', String(Math.ceil((counter.until - Date.now()) / 1000))); return res.status(429).json({ error: 'Příliš mnoho pokusů. Zkus to za 15 minut.' }); }
+    if (!timingSafeEqual(scryptSync(password, salt, 64), passwordHash)) {
+      counter.count += 1; attempts.set(key, counter); return res.status(401).json({ error: 'Nesprávné heslo.' });
+    }
+    attempts.delete(key);
+    const old = sessionFor(req); if (old) sessions.delete(old.token);
+    const token = randomBytes(32).toString('hex');
+    sessions.set(token, { expires: Date.now() + cookieOptions.maxAge });
+    res.cookie('mf_session', token, cookieOptions).json({ ok: true });
+  });
+  app.use('/api', (req, res, next) => sessionFor(req) ? next() : res.status(401).json({ error: 'Přihlas se do panelu.' }));
+  app.post('/api/logout', (req, res) => {
+    sessions.delete(sessionFor(req).token); res.clearCookie('mf_session', { ...cookieOptions, maxAge: undefined }).json({ ok: true });
+  });
+  app.get('/api/dashboard', (_req, res) => res.json({
+    characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
+    sessions: runtime.snapshot(), logs: runtime.logs.slice(-150),
+    config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters },
+    uptime: Math.floor(process.uptime()),
+  }));
+  app.post('/api/characters', async (req, res) => {
+    const input = characterSchema.parse(req.body);
+    const character = await store.update(state => {
+      if (state.characters.length >= config.maxCharacters) throw new HttpError(409, 'Dosažen limit postav.');
+      if (state.characters.some(c => c.name.toLowerCase() === input.name.toLowerCase())) throw new HttpError(409, 'Postava už je přidaná.');
+      if (input.scriptId && !state.scripts.some(s => s.id === input.scriptId)) throw new HttpError(400, 'Skript neexistuje.');
+      const result = { ...input, id: randomUUID() }; state.characters.push(result); return result;
+    });
+    res.status(201).json(character);
+  });
+  app.put('/api/characters/:id', async (req, res) => {
+    const input = characterSchema.parse(req.body);
+    await runtime.exclusive(async () => {
+      if (runtime.sessions.has(req.params.id)) throw new HttpError(409, 'Před úpravou postavu zastav.');
+      await store.update(state => {
+        const index = state.characters.findIndex(c => c.id === req.params.id);
+        if (index < 0) throw new HttpError(404, 'Postava neexistuje.');
+        if (state.characters.some(c => c.id !== req.params.id && c.name.toLowerCase() === input.name.toLowerCase())) throw new HttpError(409, 'Duplicitní postava.');
+        if (input.scriptId && !state.scripts.some(s => s.id === input.scriptId)) throw new HttpError(400, 'Skript neexistuje.');
+        state.characters[index] = { ...input, id: req.params.id };
+      });
+    });
+    res.json({ ok: true });
+  });
+  app.delete('/api/characters/:id', async (req, res) => {
+    await runtime.exclusive(async () => {
+      await runtime.stopInternal(req.params.id);
+      await store.update(state => { state.characters = state.characters.filter(c => c.id !== req.params.id); });
+    }); res.json({ ok: true });
+  });
+  app.post('/api/characters/:id/:action', async (req, res) => {
+    const { id, action } = req.params;
+    if (action === 'start') await runtime.start(id);
+    else if (action === 'reload') await runtime.reload(id);
+    else if (action === 'stop') await runtime.exclusive(async () => {
+      await store.update(state => { const c = state.characters.find(c => c.id === id); if (c) c.autoStart = false; });
+      await runtime.stopInternal(id);
+    });
+    else throw new HttpError(404, 'Neznámá akce.');
+    res.json({ ok: true });
+  });
+  app.get('/api/scripts/:id', (req, res) => {
+    const script = store.snapshot().scripts.find(s => s.id === req.params.id);
+    if (!script) throw new HttpError(404, 'Skript neexistuje.');
+    res.json(script);
+  });
+  app.post('/api/scripts', async (req, res) => {
+    const input = scriptSchema.parse(req.body);
+    const script = await store.update(state => {
+      if (state.scripts.length >= 100) throw new HttpError(409, 'Limit je 100 skriptů.');
+      const result = { ...input, id: randomUUID(), updatedAt: new Date().toISOString() }; state.scripts.push(result); return result;
+    }); res.status(201).json(script);
+  });
+  app.put('/api/scripts/:id', async (req, res) => {
+    const input = scriptSchema.parse(req.body);
+    await store.update(state => {
+      const script = state.scripts.find(s => s.id === req.params.id);
+      if (!script) throw new HttpError(404, 'Skript neexistuje.');
+      Object.assign(script, input, { updatedAt: new Date().toISOString() });
+    }); res.json({ ok: true });
+  });
+  app.delete('/api/scripts/:id', async (req, res) => {
+    await store.update(state => {
+      if (state.characters.some(c => c.scriptId === req.params.id)) throw new HttpError(409, 'Skript je přiřazen postavě. Nejdřív změň přiřazení.');
+      state.scripts = state.scripts.filter(s => s.id !== req.params.id);
+    }); res.json({ ok: true });
+  });
+  app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint neexistuje.' }));
+  app.use(express.static(publicDir));
+  app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+  app.use((error, _req, res, _next) => {
+    if (error instanceof z.ZodError) return res.status(400).json({ error: 'Neplatné údaje.', issues: error.issues.map(i => ({ field: i.path.join('.'), message: i.message })) });
+    const status = error.status || 500;
+    let message = status === 500 ? 'Akce selhala. Zkontroluj konfiguraci a logy serveru.' : error.message;
+    if (config.authCookie) message = message.split(config.authCookie).join('[REDACTED]');
+    if (status === 500) runtime.log(null, 'error', error.message);
+    res.status(status).json({ error: message });
+  });
+  return app;
+}

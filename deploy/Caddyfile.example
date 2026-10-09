@@ -1,0 +1,4 @@
+# Změň doménu a DNS nasměruj na svůj server. Caddy zde běží přímo na hostiteli.
+al.example.cz {
+    reverse_proxy 127.0.0.1:3000
+}
