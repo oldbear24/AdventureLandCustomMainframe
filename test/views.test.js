@@ -8,7 +8,7 @@ import { GameApi } from '../src/game-api.js';
 import { GameData } from '../src/game-data.js';
 import { createServer } from 'node:http';
 import { WebSocket } from 'ws';
-import { Runtime, sanitizeState } from '../src/runtime.js';
+import { Runtime, STORAGE_VALUE_LIMIT, sanitizeState, storageView } from '../src/runtime.js';
 import { attachLive } from '../src/live.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
@@ -148,6 +148,29 @@ test('a running character is read live, including the bank while inside it', asy
   f.runtime.sessions.clear();
 });
 
+test('values stored by CODE set() are listed live, pretty-printed and bounded', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.equal((await f.request('/api/characters/id-1/storage')).status, 409);
+  const storage = { cstore_farm: JSON.stringify({ map: 'main', kills: 12 }), cstore_broken: '{bad', cstore_big: JSON.stringify('x'.repeat(STORAGE_VALUE_LIMIT + 10)), activity: 'game setting' };
+  const page = { evaluate: async (fn, prefix) => {
+    const previous = globalThis.window; globalThis.window = { localStorage: { ...storage, getItem: key => storage[key] ?? null } };
+    try { return fn(prefix); } finally { globalThis.window = previous; }
+  } };
+  // Object.keys on the fake localStorage also sees getItem; it is filtered out by the prefix like any game key.
+  f.runtime.sessions.set('id-1', { id: 'id-1', status: 'running', page, character: { name: 'Runner' } });
+  const result = await f.request('/api/characters/id-1/storage');
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.entries.map(e => e.key), ['big', 'broken', 'farm']);
+  const [big, broken, farm] = result.data.entries;
+  assert.equal(farm.value, '{\n  "map": "main",\n  "kills": 12\n}'); assert.equal(farm.valid, true);
+  assert.equal(broken.value, '{bad'); assert.equal(broken.valid, false);
+  assert.equal(big.truncated, true); assert.equal(big.value.length, STORAGE_VALUE_LIMIT);
+  assert.equal(result.data.total, 3);
+  assert.equal(JSON.stringify(result.data).includes('game setting'), false);
+  f.runtime.sessions.clear();
+  const many = storageView(Array.from({ length: 600 }, (_, i) => ({ key: `k${i}`, value: String(i) })).concat([null, { key: 1, value: 'x' }]));
+  assert.equal(many.entries.length, 500); assert.equal(many.total, 600);
+});
 test('game state is sanitized before it reaches the panel', () => {
   const state = sanitizeState(JSON.stringify({ name: 'A'.repeat(100), level: 5, x: 1.5, y: 'bad', nearby: [{ kind: 'boss', name: 'goo', x: 1.4, y: 2, target: 1, extra: 'x' }, { x: 'nope' }], secret: 'x' }));
   assert.equal(state.name.length, 32); assert.equal(state.x, 1.5); assert.equal(state.y, 0);

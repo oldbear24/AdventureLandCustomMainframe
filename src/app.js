@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { characterSchema, scriptSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
+import { storageView } from './runtime.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 class HttpError extends Error {
@@ -129,6 +130,8 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     });
     res.json(script);
   });
+  // Everything the character's CODE stored with set(name, value), read live from its game page.
+  app.get('/api/characters/:id/storage', async (req, res) => res.json(storageView(await runtime.exclusive(() => runtime.storage(req.params.id)))));
   app.get('/api/characters/:id/inventory', async (req, res) => res.json(await runtime.exclusive(async () => inventoryView(await runtime.inventory(req.params.id)))));
   app.get('/api/maps', async (_req, res) => {
     if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');

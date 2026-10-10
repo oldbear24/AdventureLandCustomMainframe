@@ -252,6 +252,24 @@ try {
   await page.locator('[data-view-link=map]').click();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   await page.screenshot({ path: 'test-results/map-mobile.png', fullPage: true });
+  // Values saved by CODE set() live in the game page's localStorage under "cstore_".
+  await gamePage.evaluate(() => { localStorage.setItem('cstore_farm_state', JSON.stringify({ map: 'main', kills: 12 })); localStorage.setItem('cstore_leader', '"TestWarrior"'); localStorage.setItem('game_setting', 'hidden'); });
+  await page.locator('[data-view-link=overview]').click();
+  await page.locator('[data-action=storage]').click();
+  await page.locator('#storage-dialog').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('.storage-entry').count(), 2);
+  assert.match(await page.locator('#storage-list').textContent(), /farm_state[\s\S]*"kills": 12/);
+  assert.doesNotMatch(await page.locator('#storage-list').textContent(), /game_setting/);
+  assert.match(await page.locator('#storage-from').textContent(), /TestWarrior · 2 hodnoty/);
+  await page.locator('#storage-filter').fill('leader');
+  assert.equal(await page.locator('.storage-entry').count(), 1);
+  await gamePage.evaluate(() => localStorage.setItem('cstore_extra', '1'));
+  await page.locator('#reload-storage').click();
+  await page.waitForFunction(() => document.querySelector('#storage-from').textContent.includes('3 hodnoty'));
+  assert.equal(await page.locator('#storage-filter').inputValue(), 'leader');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.screenshot({ path: 'test-results/storage-mobile.png', fullPage: true });
+  await page.locator('#close-storage').click();
   await page.setViewportSize({ width: 1440, height: 1100 });
   const scriptId = store.snapshot().scripts[0].id;
   await page.locator('[data-view-link=editor]').click();

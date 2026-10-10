@@ -10,7 +10,7 @@ async function api(url, method = 'GET', body) {
   const response = await fetch(`/api${url}`, { method, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; resetViews(); disconnectLive(); }
+    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog', 'storage-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; resetViews(); disconnectLive(); }
     throw new Error(data.error + (data.issues ? ` ${data.issues.map(i => `${i.field}: ${i.message}`).join(', ')}` : ''));
   }
   return data;
@@ -104,7 +104,7 @@ function characterCard(c, session) {
     ${supplies}${statsBlock(session)}
     ${codeBox}${error ? `<p class="card-error">${escape(error)}</p>` : ''}
     ${skillsBlock(c, session)}
-    <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="inventory" data-id="${c.id}">Inventář</button><button class="ghost" data-action="locate" data-id="${c.id}" ${status !== 'running' ? 'disabled' : ''}>Mapa</button><button class="ghost" data-action="logs" data-id="${c.id}">Logy</button><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
+    <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="inventory" data-id="${c.id}">Inventář</button><button class="ghost" data-action="storage" data-id="${c.id}" ${status !== 'running' ? 'disabled' : ''} title="Hodnoty uložené CODE funkcí set()">Úložiště</button><button class="ghost" data-action="locate" data-id="${c.id}" ${status !== 'running' ? 'disabled' : ''}>Mapa</button><button class="ghost" data-action="logs" data-id="${c.id}">Logy</button><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
   </article>`;
 }
 // Party overview: parties of running characters, servers and distances between own characters.
@@ -260,7 +260,7 @@ $('login-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
-  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; resetViews(); disconnectLive(); }
+  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog', 'storage-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; resetViews(); disconnectLive(); }
   catch (error) { toast(error.message, true); }
 });
 function openAccount() {
@@ -309,6 +309,7 @@ $('characters').addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]'); if (!button) return;
   const { id, action } = button.dataset;
   if (action === 'transfer') return openTransfer(id);
+  if (action === 'storage') return openStorage(id);
   if (action === 'edit') return openCharacter(dashboard.characters.find(c => c.id === id));
   if (action === 'inventory') { inventoryTarget = dashboard.characters.find(c => c.id === id)?.name || null; inventoryData = null; return showView('inventory'); }
   if (action === 'locate') { mapState.follow = id; mapState.name = ''; return showView('map'); }
@@ -455,6 +456,33 @@ async function openTransfer(id) {
     transferFields(); if (!$('transfer-dialog').open) $('transfer-dialog').showModal();
   } catch (error) { toast(error.message, true); }
 }
+let storageCharacterId = '', storageData = null;
+function renderStorage() {
+  if (!storageData) return;
+  const filter = $('storage-filter').value.trim().toLowerCase();
+  const shown = storageData.entries.filter(e => !filter || e.key.toLowerCase().includes(filter) || e.value.toLowerCase().includes(filter));
+  const bytes = value => value < 1024 ? `${number(value)} B` : `${(value / 1024).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} kB`;
+  const limited = storageData.total > storageData.entries.length ? ` · zobrazeno prvních ${number(storageData.entries.length)}` : '';
+  const name = dashboard?.characters.find(c => c.id === storageCharacterId)?.name || '';
+  $('storage-from').textContent = `${name} · ${number(storageData.total)} ${storageData.total === 1 ? 'hodnota' : storageData.total >= 2 && storageData.total <= 4 ? 'hodnoty' : 'hodnot'} · ${bytes(storageData.size)}${limited} · načteno ${new Date(storageData.observedAt).toLocaleTimeString('cs-CZ')}`;
+  if (!storageData.entries.length) { $('storage-list').innerHTML = '<p class="empty-note">CODE zatím nic neuložil. Hodnoty vzniknou voláním <code>set("klíč", hodnota)</code>.</p>'; return; }
+  if (!shown.length) { $('storage-list').innerHTML = '<p class="empty-note">Žádná hodnota neodpovídá hledání.</p>'; return; }
+  $('storage-list').innerHTML = shown.map(e => `<details class="storage-entry" ${shown.length <= 8 ? 'open' : ''}><summary><code>${escape(e.key)}</code><small>${bytes(e.size)}${e.valid ? '' : ' · neplatný JSON'}</small></summary><pre>${escape(e.value)}${e.truncated ? '\n…zkráceno' : ''}</pre></details>`).join('');
+}
+async function openStorage(id) {
+  try {
+    const data = await api(`/characters/${id}/storage`);
+    if (storageCharacterId !== id) $('storage-filter').value = '';
+    storageCharacterId = id; storageData = data; $('storage-error').textContent = '';
+    renderStorage(); if (!$('storage-dialog').open) $('storage-dialog').showModal();
+  } catch (error) { if ($('storage-dialog').open) $('storage-error').textContent = error.message; else toast(error.message, true); }
+}
+$('close-storage').addEventListener('click', () => $('storage-dialog').close());
+$('storage-filter').addEventListener('input', renderStorage);
+$('reload-storage').addEventListener('click', async () => {
+  $('reload-storage').disabled = true;
+  try { await openStorage(storageCharacterId); } finally { $('reload-storage').disabled = false; }
+});
 $('close-transfer').addEventListener('click', () => $('transfer-dialog').close());
 $('reload-transfer').addEventListener('click', async () => {
   $('reload-transfer').disabled = true;

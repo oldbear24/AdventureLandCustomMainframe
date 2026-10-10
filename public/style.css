@@ -303,6 +303,18 @@ dialog .primary{width:100%}
 #transfer-review{border-top:1px solid var(--line);padding-top:16px;margin-top:18px}
 #transfer-summary,#transfer-result{line-height:1.5;overflow-wrap:anywhere}
 #transfer-form>button{margin-top:16px}
+dialog.wide-dialog{max-width:760px}
+.storage-tools{display:flex;gap:10px;align-items:center}
+.storage-tools input{flex:1;min-width:0}
+.storage-list{display:flex;flex-direction:column;gap:8px}
+.storage-entry{border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}
+.storage-entry summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;cursor:pointer}
+.storage-entry summary code{color:var(--accent);overflow-wrap:anywhere}
+.storage-entry summary code::before{content:'▸ ';color:var(--faint)}
+.storage-entry[open] summary code::before{content:'▾ '}
+.storage-entry summary small{color:var(--faint);font:11px Consolas,monospace;white-space:nowrap}
+.storage-entry pre{margin:0;padding:10px 12px;border-top:1px solid var(--line);max-height:320px;overflow:auto;font:12px/1.5 Consolas,monospace;color:#a7bba9;white-space:pre-wrap;overflow-wrap:anywhere}
+.empty-note{color:var(--muted);font-size:13px;line-height:1.5}
 #toast{position:fixed;bottom:22px;right:22px;max-width:min(480px,90vw);z-index:20;background:#223b25;color:#daf0d5;border:1px solid #557b50;border-radius:8px;padding:14px 18px;box-shadow:0 8px 40px #0008}
 #toast.error{background:var(--danger-soft);border-color:#91564c;color:#ffd3c9}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}

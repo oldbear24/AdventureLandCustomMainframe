@@ -42,6 +42,20 @@ export function sanitizeState(raw) {
   };
 }
 
+// CODE set(name, value) stores JSON in the page's localStorage under "cstore_" + name.
+export const STORAGE_PREFIX = 'cstore_';
+export const STORAGE_LIMIT = 500;
+export const STORAGE_VALUE_LIMIT = 64_000;
+export function storageView(raw) {
+  const entries = (Array.isArray(raw) ? raw : []).filter(e => e && typeof e.key === 'string' && typeof e.value === 'string');
+  const view = entries.slice(0, STORAGE_LIMIT).map(({ key, value }) => {
+    let text = value, valid = true;
+    try { text = JSON.stringify(JSON.parse(value), null, 2) ?? value; } catch { valid = false; }
+    return { key: key.slice(0, 200), size: value.length, valid, value: text.slice(0, STORAGE_VALUE_LIMIT), truncated: text.length > STORAGE_VALUE_LIMIT };
+  }).sort((a, b) => a.key.localeCompare(b.key));
+  return { entries: view, total: entries.length, size: entries.reduce((sum, e) => sum + e.key.length + e.value.length, 0), observedAt: new Date().toISOString() };
+}
+
 // Emits 'state' (id, state) whenever a running character reports a new position.
 export class Runtime extends EventEmitter {
   constructor(config, store, browserType = chromium, gameApi = null) {
@@ -313,6 +327,14 @@ export class Runtime extends EventEmitter {
     }));
     if (!snapshot) throw Object.assign(new Error('Postava se odpojila.'), { status: 409 });
     return snapshot;
+  }
+  // Values the character's CODE saved with set(); the caller shapes them with storageView.
+  async storage(id) {
+    const session = this.sessions.get(id);
+    if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
+    const entries = await withDeadline(session.page.evaluate(prefix => Object.keys(window.localStorage).filter(key => key.startsWith(prefix))
+      .map(key => ({ key: key.slice(prefix.length), value: window.localStorage.getItem(key) })), STORAGE_PREFIX));
+    return entries.map(e => ({ ...e, key: this.redact(e.key), value: typeof e.value === 'string' ? this.redact(e.value) : e.value }));
   }
   sessionByName(name) {
     return [...this.sessions.values()].find(s => s.status === 'running' && s.character.name.toLowerCase() === name.toLowerCase()) || null;
