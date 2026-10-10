@@ -116,7 +116,9 @@ export class GameData {
     for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { ...itemDetails(G, key, item, titles), icon: iconOf(G, sheets, key, item) };
     const maps = Object.entries(G.maps).filter(([name, map]) => MAP_NAME.test(name) && map && !map.ignore && (G.geometry[map.key] || G.geometry[name]))
       .map(([name, map]) => ({ name, title: text(map.name, name) })).sort((a, b) => a.title.localeCompare(b.title));
-    return { G, items, maps, sheets, version: finite(G.version) };
+    const monsters = Object.entries(G.monsters || {}).filter(([key, monster]) => ITEM_NAME.test(key) && monster && typeof monster === 'object')
+      .map(([key, monster]) => ({ key, name: text(monster.name, key) }));
+    return { G, items, maps, sheets, monsters, version: finite(G.version) };
   }
   // Refreshes at most every 6 hours; a failed refresh keeps serving the previous copy.
   async load() {
@@ -159,6 +161,10 @@ export class GameData {
     } catch { throw failure(502, 'Obrázky předmětů se nepodařilo stáhnout z Adventure Land.'); }
     if (body.length > MAX_SHEET_SIZE || !body.subarray(0, 8).equals(PNG)) throw failure(502, 'Obrázky předmětů mají neočekávaný formát.');
     return body;
+  }
+  async targets() {
+    const data = await this.load();
+    return { items: Object.entries(data.items).map(([key, item]) => ({ key, name: item.name })), monsters: data.monsters };
   }
   // Display names are optional: an unreachable data.js must not hide an inventory.
   async itemNames() {

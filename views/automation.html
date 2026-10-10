@@ -1,0 +1,21 @@
+      <section id="view-automation" class="view" aria-labelledby="automation-title">
+        <header class="page-head"><div><p class="eyebrow">AUTOMATIZACE</p><h1 id="automation-title">Co postavy dělají a jak je řídit</h1></div><div class="head-actions"><span id="automation-updated" class="fine"></span><button id="automation-reload" class="ghost">Obnovit</button></div></header>
+        <p class="fine automation-intro">Nastavení, která CODE běžící postavy nabízí: hlavní cíl farmení, přepínače modulů, výpravy a vlastní hodnoty. Změna se projeví hned. Se zaškrtnutým <strong>Pamatovat</strong> panel hodnotu uloží a nastaví ji znovu po každém připojení postavy (úložiště CODE začíná po novém připojení prázdné).</p>
+        <div id="automation" class="automation-grid" aria-live="polite"><p class="empty-note">Načítám…</p></div>
+        <datalist id="automation-targets"></datalist>
+        <details class="surface automation-help"><summary>Jak do CODE přidat vlastní nastavení a hlášení činnosti</summary>
+          <p class="fine">Panel čte globální proměnné CODE postavy. Stačí do CODE přidat například:</p>
+<pre>window.mainframe_controls = [
+  { key: "mode", label: "Režim", type: "select", options: ["farm", "home"],
+    get: () =&gt; mode, set: value =&gt; { mode = value; } },
+  { key: "minPotions", label: "Minimum lektvarů", type: "number", min: 0, max: 9999,
+    get: () =&gt; minPotions, set: value =&gt; { minPotions = value; } },
+  { key: "loot", label: "Sbírat kořist", type: "boolean",
+    get: () =&gt; loot, set: value =&gt; { loot = value; }, status: () =&gt; "truhel: " + Object.keys(get_chests()).length },
+];
+window.mainframe_activity = () =&gt; ({ current: "Boj: goo", next: "Doplnit lektvary", mode: "work",
+  events: [{ at: Date.now(), text: "Zabit goo", status: "confirmed" }] });</pre>
+          <p class="fine">Typy: <code>boolean</code>, <code>number</code>, <code>text</code>, <code>select</code>, <code>item</code>, <code>monster</code> a <code>target</code> (hodnota <code>{target, goal}</code>). <code>set</code> může vrátit <code>false</code>, když hodnotu odmítne. Volitelně <code>group</code>, <code>help</code> a <code>status</code>. Bez úprav panel rozpozná <code>adventure_primary</code> (cíl farmení) a <code>adventure_team</code> (moduly, výpravy, plán a události). Pole Příkaz volá <code>handle_command(název, argumenty)</code> stejně jako příkaz napsaný v herním chatu, do chatu ale nic neposílá.</p>
+        </details>
+      </section>
+<!-- dialogs -->

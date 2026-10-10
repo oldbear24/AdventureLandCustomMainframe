@@ -63,6 +63,130 @@ export function storageView(raw) {
   return { entries: view, total: entries.length, size: entries.reduce((sum, e) => sum + e.key.length + e.value.length, 0), observedAt: new Date().toISOString() };
 }
 
+// Runs inside the game page. Collects what the character's CODE lets the panel set and what it reports doing,
+// then lists it ('list'), sets one value ('set'), applies remembered values ('apply') or runs a chat command ('command').
+// Sources: window.mainframe_controls / window.mainframe_activity defined by CODE (README, Automatizace), plus the
+// globals adventure_primary (team farming target) and adventure_team (module switches, plan, events) when present.
+export async function pageControls(input) {
+  const runner = window.document?.getElementById('maincode')?.contentWindow;
+  if (!window.code_active || !runner) return { running: false, controls: [], commands: false, activity: null, errors: [] };
+  const KEY = /^[a-zA-Z0-9_.:-]{1,80}$/, TYPES = ['boolean', 'number', 'text', 'select', 'item', 'monster', 'target'];
+  const MODULES = { learning: 'Učení lovišť', combat: 'Boj', skills: 'Podpůrné schopnosti', supply: 'Zásobování', equipment: 'Výbava', economy: 'Správa zlata', gathering: 'Sběr', storage: 'Svoz do banky' };
+  const text = (value, max = 200) => typeof value === 'string' ? value.slice(0, max) : '';
+  const finite = value => Number.isFinite(value) ? value : null;
+  const message = error => text(String(error?.message || error?.reason || error), 200);
+  const errors = [], controls = [];
+  const add = control => { if (!controls.some(c => c.key === control.key)) controls.push(control); };
+  try {
+    let own = runner.mainframe_controls;
+    if (typeof own === 'function') own = own();
+    for (const c of Array.isArray(own) ? own.slice(0, 50) : []) {
+      if (!c || typeof c.key !== 'string' || !KEY.test(c.key) || typeof c.set !== 'function') continue;
+      add({
+        key: c.key, label: text(c.label, 80) || c.key, group: text(c.group, 60) || 'Nastavení CODE', type: TYPES.includes(c.type) ? c.type : 'text', help: text(c.help, 400),
+        options: Array.isArray(c.options) ? c.options.filter(o => typeof o === 'string').slice(0, 50).map(o => o.slice(0, 80)) : null, min: finite(c.min), max: finite(c.max),
+        get: () => typeof c.get === 'function' ? c.get() : c.value, status: () => typeof c.status === 'function' ? c.status() : c.status, set: value => c.set(value),
+      });
+    }
+  } catch (error) { errors.push(`mainframe_controls: ${message(error)}`); }
+  const primary = runner.adventure_primary;
+  if (primary && typeof primary.set === 'function' && typeof primary.status === 'function') add({
+    key: 'primary', label: 'Hlavní cíl farmení', group: 'Farmení celého týmu', type: 'target', options: null, min: null, max: null,
+    help: 'Předmět nebo příšera pro celý tým. U předmětu lze zadat počet kusů – po jeho dosažení se cíl sám zruší (0 = až do zrušení). Bez cíle si tým vybírá loviště sám podle XP a zlata.',
+    get: () => { const s = primary.status(); return { target: s?.target || '', goal: s?.goal || 0 }; },
+    status: () => { const s = primary.status(); return { text: s?.status, by: s?.by, sources: s?.sources }; },
+    set: value => value.target ? primary.set(value.target, value.goal) : primary.clear(),
+  });
+  const team = runner.adventure_team;
+  let snapshot = null;
+  if (team && typeof team.snapshot === 'function') { try { snapshot = team.snapshot(); } catch (error) { errors.push(`adventure_team: ${message(error)}`); } }
+  const modules = snapshot?.autonomy?.modules;
+  if (typeof team?.setModule === 'function' && modules && typeof modules === 'object') {
+    for (const [name, row] of Object.entries(modules)) {
+      if (!/^[a-zA-Z0-9_]{1,40}$/.test(name) || typeof row?.enabled !== 'boolean') continue;
+      add({
+        key: `module.${name}`, label: MODULES[name] || name, group: 'Moduly této postavy', type: 'boolean', help: '', options: null, min: null, max: null,
+        get: () => row.enabled, fresh: () => team.snapshot().autonomy.modules[name].enabled,
+        status: () => !row.enabled ? 'vypnuto' : row.until > Date.now() ? 'čeká po chybě' : row.busy ? 'pracuje' : 'zapnuto', set: value => team.setModule(name, value),
+      });
+    }
+  }
+  const expedition = snapshot?.expedition;
+  if (typeof team?.setDungeons === 'function' && typeof expedition?.enabled === 'boolean') add({
+    key: 'dungeons', label: 'Dungeonové výpravy', group: 'Farmení celého týmu', type: 'boolean', options: null, min: null, max: null,
+    help: 'Pravidelné krátké výpravy celé skupiny do Cave of Darkness.', get: () => expedition.enabled, fresh: () => team.snapshot().expedition.enabled,
+    status: () => expedition.state?.reason, set: value => team.setDungeons(value),
+  });
+  const safeValue = (type, value) => {
+    if (type === 'boolean') return !!value;
+    if (type === 'number') return finite(Number(value));
+    if (type === 'target') return { target: text(value?.target, 40), goal: Number.isInteger(value?.goal) && value.goal >= 0 ? Math.min(value.goal, 9999) : 0 };
+    return value === null || value === undefined ? '' : text(String(value), 200);
+  };
+  const statusOf = raw => {
+    if (typeof raw === 'string') return { text: raw.slice(0, 600) };
+    if (!raw || typeof raw !== 'object') return null;
+    const sources = Array.isArray(raw.sources) ? raw.sources.slice(0, 8).filter(r => r && typeof r === 'object').map(r => ({ name: text(r.name, 60) || text(r.type, 60), chance: finite(r.chance), map: text(r.map, 40) })) : [];
+    return { text: text(raw.text, 600), by: text(raw.by, 40), sources };
+  };
+  const view = c => {
+    let value = null, status = null;
+    try { value = safeValue(c.type, c.get()); } catch (error) { errors.push(`${c.key}: ${message(error)}`); }
+    try { status = statusOf(c.status()); } catch { status = null; }
+    return { key: c.key, label: c.label, group: c.group, type: c.type, help: c.help, options: c.options, min: c.min, max: c.max, value, status };
+  };
+  const invalid = (c, value) => {
+    if (c.type === 'boolean') return typeof value === 'boolean' ? null : 'Očekávám zapnuto nebo vypnuto.';
+    if (c.type === 'number') return !Number.isFinite(value) ? 'Očekávám číslo.' : c.min !== null && value < c.min ? `Nejméně ${c.min}.` : c.max !== null && value > c.max ? `Nejvýše ${c.max}.` : null;
+    if (c.type === 'target') return value && typeof value === 'object' && typeof value.target === 'string' && value.target.length <= 40 && Number.isInteger(value.goal) && value.goal >= 0 && value.goal <= 9999 ? null : 'Očekávám cíl a počet kusů.';
+    if (typeof value !== 'string' || value.length > 200) return 'Očekávám text do 200 znaků.';
+    return c.type === 'select' && c.options && !c.options.includes(value) ? 'Hodnota není mezi nabízenými možnostmi.' : null;
+  };
+  const apply = async (key, value) => {
+    const c = controls.find(x => x.key === key);
+    if (!c) return { key, ok: false, missing: true, message: 'CODE toto nastavení teď nenabízí.' };
+    const problem = invalid(c, value);
+    if (problem) return { key, label: c.label, ok: false, message: problem };
+    let result;
+    try { result = await c.set(value); } catch (error) { return { key, label: c.label, ok: false, message: `CODE hodnotu nepřijal: ${message(error)}` }; }
+    if (result === false) return { key, label: c.label, ok: false, message: 'CODE hodnotu odmítl; důvod najdeš v logu postavy.' };
+    // Values read from adventure_team's snapshot were taken before the change, so they are read again.
+    let current;
+    try { current = (c.fresh || c.get)(); } catch { current = value; }
+    return { key, label: c.label, ok: true, value: safeValue(c.type, current) };
+  };
+  if (input.action === 'set') return apply(input.key, input.value);
+  if (input.action === 'apply') {
+    const results = [];
+    for (const [key, value] of input.values) results.push(await apply(key, value));
+    return { running: true, results };
+  }
+  if (input.action === 'command') {
+    if (typeof runner.handle_command !== 'function') return { ok: false, message: 'CODE nemá funkci handle_command.' };
+    let result;
+    try { result = await runner.handle_command(input.name, input.args); } catch (error) { return { ok: false, message: `Příkaz selhal: ${message(error)}` }; }
+    return result === -1 ? { ok: false, message: `CODE příkaz /${input.name} nezná.` } : { ok: true };
+  }
+  let activity = null;
+  try {
+    const own = typeof runner.mainframe_activity === 'function' ? runner.mainframe_activity() : null;
+    const plan = own || snapshot?.plan;
+    const events = Array.isArray(own?.events) ? own.events : Array.isArray(snapshot?.events) ? snapshot.events : [];
+    if (plan || events.length) {
+      activity = {
+        current: text(plan?.current), next: text(plan?.next), mode: text(plan?.mode, 20), leader: text(plan?.leader, 40),
+        events: events.slice(-15).filter(e => e && typeof e.text === 'string').map(e => ({ at: finite(e.at), kind: text(e.kind, 30), text: text(e.text, 220), status: text(e.status, 20) })),
+      };
+    }
+  } catch (error) { errors.push(`činnost: ${message(error)}`); }
+  return { running: true, controls: controls.map(view), commands: typeof runner.handle_command === 'function', activity, errors: errors.slice(0, 10) };
+}
+export function formatControl(value) {
+  if (typeof value === 'boolean') return value ? 'zapnuto' : 'vypnuto';
+  if (value && typeof value === 'object') return value.target ? `${value.target}${value.goal ? ` ×${value.goal}` : ''}` : 'žádný';
+  return String(value);
+}
+
 // Emits 'state' (id, state) whenever a running character reports a new position,
 // and 'log' (entry) for every new log entry.
 export class Runtime extends EventEmitter {
@@ -213,6 +337,8 @@ export class Runtime extends EventEmitter {
       }, interval);
     }, LIVE_INTERVAL));
     await this.loadScript(session, prefetched);
+    const saved = this.store.snapshot().characters.find(c => c.id === session.id)?.controls || {};
+    session.pendingControls = Object.keys(saved).length ? { values: { ...saved }, until: Date.now() + 60_000 } : null;
     session.status = 'running'; session.error = null; session.attempts = 0; session.lastActivityAt = Date.now();
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
   }
@@ -419,6 +545,53 @@ export class Runtime extends EventEmitter {
       return keys.length;
     }, STORAGE_PREFIX));
   }
+  liveSession(id) {
+    const session = this.sessions.get(id);
+    if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
+    return session;
+  }
+  async evaluateControls(session, input) {
+    const result = await withDeadline(session.page.evaluate(pageControls, input));
+    if (!result || typeof result !== 'object' || JSON.stringify(result).length > 200_000) throw new Error('CODE vrátil neočekávaná data.');
+    if (result.running === false) throw Object.assign(new Error('CODE postavy neběží.'), { status: 409 });
+    return JSON.parse(this.redact(JSON.stringify(result)));
+  }
+  // What the character's CODE lets the panel set, and what it reports doing.
+  async controls(id) { return this.evaluateControls(this.liveSession(id), { action: 'list' }); }
+  async setControl(id, key, value) {
+    const session = this.liveSession(id);
+    const result = await this.evaluateControls(session, { action: 'set', key, value });
+    if (result.ok) {
+      if (session.pendingControls) delete session.pendingControls.values[key];
+      this.log(id, 'info', `Automatizace: ${result.label} = ${formatControl(result.value)}`);
+    }
+    return result;
+  }
+  // Calls the CODE's handle_command(name, args) the way a chat command typed in the game does; nothing is sent to chat.
+  async runCommand(id, name, args) {
+    const result = await this.evaluateControls(this.liveSession(id), { action: 'command', name, args });
+    if (result.ok) this.log(id, 'info', `Automatizace: příkaz /${name}${args ? ` ${args}` : ''}`);
+    return result;
+  }
+  // A new connection starts with empty CODE storage, so remembered values are set again once the CODE offers them.
+  async applySavedControls(session) {
+    const pending = session.pendingControls, entries = Object.entries(pending.values);
+    let results = [];
+    try { results = entries.length ? (await this.evaluateControls(session, { action: 'apply', values: entries })).results : []; }
+    catch (error) { if (error.status !== 409) throw error; }
+    const applied = [];
+    for (const r of results) {
+      if (r.ok) { applied.push(`${r.label} = ${formatControl(r.value)}`); delete pending.values[r.key]; }
+      else if (!r.missing) { this.log(session.id, 'error', `Automatizace: zapamatovanou hodnotu ${r.label || r.key} nelze nastavit – ${r.message}`); delete pending.values[r.key]; }
+    }
+    if (applied.length) this.log(session.id, 'info', `Automatizace po připojení: ${applied.join(', ')}`);
+    const left = Object.keys(pending.values);
+    if (!left.length) session.pendingControls = null;
+    else if (Date.now() > pending.until) {
+      session.pendingControls = null;
+      this.log(session.id, 'error', `Automatizace: CODE do minuty po startu nenabídl ${left.join(', ')}; hodnoty zůstávají zapamatované pro další připojení.`);
+    }
+  }
   sessionByName(name) {
     return [...this.sessions.values()].find(s => s.status === 'running' && s.character.name.toLowerCase() === name.toLowerCase()) || null;
   }
@@ -519,6 +692,10 @@ export class Runtime extends EventEmitter {
       } catch (error) { session.state = null; this.failed(session, error); }
     }
     for (const session of this.sessions.values()) await this.updateAlerts(session);
+    for (const session of this.sessions.values()) {
+      if (session.status !== 'running' || !session.pendingControls) continue;
+      await this.applySavedControls(session).catch(error => this.log(session.id, 'error', `Automatizace: ${this.redact(error.message)}`));
+    }
   }
   // Feeds the XP/gold history and frozen-CODE detection; reloads CODE of an idle character when enabled.
   async observe(session, previous) {
