@@ -12,6 +12,7 @@ import { createWebServer } from '../src/server.js';
 import { configFromEnv } from '../src/config.js';
 import { GameAccount } from '../src/game-account.js';
 import { GameApi } from '../src/game-api.js';
+import { GameData } from '../src/game-data.js';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-browser-'));
 const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', DATA_DIR: directory });
@@ -30,7 +31,8 @@ const browserType = {
         navigations.push(url.pathname);
         assert.match(route.request().headers().cookie || '', /auth=fixture-user-fixture-auth-secret/);
         const body = url.pathname.startsWith('/server/') ? `<script>window.user_id=${JSON.stringify(accountValid ? 'fixture-user' : '')}; window.X={characters:${JSON.stringify(owned ? [{ name: 'TestWarrior', online: alreadyOnline }] : [])},servers:[{region:'EU',name:'I'}]};</script>` : url.pathname.startsWith('/character/') ? `<!doctype html><body><script>
-          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],map:'main',x:20,y:40};window.sentTransfers=[];
+          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40};window.sentTransfers=[];
+          window.entities={m1:{type:'monster',mtype:'goo',map:'main',x:60,y:40,target:'TestWarrior'},p1:{type:'character',name:'Stranger',map:'main',x:-30,y:10}};
           window.socket={connected:true};window.code_run=false;window.code_active=false;
           window.add_log=()=>{};window.add_codelog=()=>{};
           window.stop_runner=()=>{document.querySelector('#maincode')?.remove();window.code_run=window.code_active=false};
@@ -58,7 +60,9 @@ const gameApi = new GameApi(config, async (url, options) => {
   if (!apiAvailable) throw new Error('Fixture API offline');
   const method = url.slice(url.lastIndexOf('/') + 1);
   assert.ok(url.startsWith(`${GAME_ORIGIN}/mcp_api/`));
-  if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'TestWarrior', level: 42, class: 'warrior', profile: { online: false } }] });
+  if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'TestWarrior', level: 42, class: 'warrior', profile: { online: false } }, { character: 'SavedMage', level: 30, class: 'mage', profile: { online: false, map: 'main', x: -60, y: -20 } }] });
+  if (method === 'mainframe_get_character') return Response.json({ success: true, profile: { name: 'SavedMage', class: 'mage', level: 30, gold: 77, inventory_slots: 42, synchronized_at: '2026-10-10T01:00:00.000Z', inventory: [{ name: 'hpot0', q: 5 }], equipment: { mainhand: { name: 'staff', level: 2 } } } });
+  if (method === 'get_bank') return Response.json({ success: true, gold: 465870, retrieved_at: new Date().toISOString(), packs: { items0: [{ name: 'hpot0', q: 131 }, null, { name: 'sword', level: 4 }] } });
   if (method === 'list_codes') return Response.json({ success: true, codes: [{ slot: cloudCode.slot, name: cloudCode.name, version: cloudCode.version }] });
   assert.equal(input.slot, '1');
   if (method === 'get_code') return Response.json({ success: true, code: { ...cloudCode } });
@@ -66,7 +70,11 @@ const gameApi = new GameApi(config, async (url, options) => {
   throw new Error(`Unexpected API method ${method}`);
 }); await gameApi.init();
 runtime.gameApi = gameApi;
-const app = createApp(config, store, runtime, account, gameApi);
+const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
+  maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
+  geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
+const gameData = new GameData(async url => { assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`); });
+const app = createApp(config, store, runtime, account, gameApi, gameData);
 const server = await createWebServer(config, app); server.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `https://127.0.0.1:${server.address().port}`;
 await mkdir('test-results', { recursive: true });
@@ -163,6 +171,43 @@ try {
   assert.equal(await gamePage.evaluate(() => window.code_active), true);
   assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   assert.equal(await page.locator('.meter i').first().evaluate(element => Math.round(element.getBoundingClientRect().width / element.parentElement.getBoundingClientRect().width * 100)), 80);
+  // Live map: own character, nearby monster/player, saved position of another character, doors switch maps.
+  await runtime.exclusive(() => runtime.tick());
+  await page.locator('[data-view-link=map]').click();
+  await page.locator('#map-overlay .map-own').waitFor();
+  await page.waitForFunction(() => document.querySelector('#map-overlay .map-saved') && document.querySelector('#map-overlay .map-monster.targeting'));
+  assert.match(await page.locator('#map-name').textContent(), /Mainland/);
+  assert.equal(await page.locator('#map-overlay .map-player').count(), 1);
+  assert.match(await page.locator('#map-characters').textContent(), /TestWarrior.*SavedMage/s);
+  await page.locator('#map-characters [data-follow]').click();
+  await page.waitForFunction(() => document.querySelector('#map-nearby').textContent.includes('goo'));
+  await page.evaluate(() => { document.getElementById('toast').hidden = true; });
+  await page.screenshot({ path: 'test-results/map-desktop.png', fullPage: true });
+  await page.locator('#map-fit').click();
+  await page.locator('#map-overlay [data-door=bank]').click();
+  await page.waitForFunction(() => document.querySelector('#map-name').textContent === 'The Bank');
+  // Inventories: running character live, other account character and bank from the saved snapshot.
+  await page.locator('[data-view-link=inventory]').click();
+  await page.locator('[data-inventory=TestWarrior]').click();
+  await page.waitForFunction(() => document.querySelector('#inventory-detail').textContent.includes('Health Potion'));
+  assert.match(await page.locator('#inventory-detail').textContent(), /Živě/);
+  assert.match(await page.locator('#inventory-detail').textContent(), /Short Sword/);
+  await page.locator('#inventory-filter').fill('potion');
+  assert.equal(await page.locator('#inventory-detail .item-tile:not(.dimmed):not(.empty-slot)').count(), 1);
+  await page.locator('#inventory-filter').fill('');
+  await page.locator('[data-inventory=SavedMage]').click();
+  await page.waitForFunction(() => document.querySelector('#inventory-detail').textContent.includes('Uložený stav'));
+  await page.locator('[data-inventory=__bank__]').click();
+  await page.waitForFunction(() => document.querySelector('#inventory-detail').textContent.includes('Trezor 1'));
+  assert.match(await page.locator('#inventory-detail').textContent(), /465\s870 G/);
+  await page.screenshot({ path: 'test-results/bank-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.screenshot({ path: 'test-results/bank-mobile.png', fullPage: true });
+  await page.locator('[data-view-link=map]').click();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.screenshot({ path: 'test-results/map-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1100 });
   const scriptId = store.snapshot().scripts[0].id;
   await page.locator('[data-view-link=editor]').click();
   await page.locator(`.script-item[data-script-id="${scriptId}"]`).click();
@@ -215,7 +260,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map and inventories/bank, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

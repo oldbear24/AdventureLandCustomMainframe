@@ -17,6 +17,8 @@
       <div class="brand"><div class="logo small">AL<span>▧</span></div><div><strong>Mainframe</strong><small>ADVENTURE LAND</small></div></div>
       <nav class="nav" aria-label="Sekce panelu">
         <button class="nav-link" data-view-link="overview" aria-current="page"><span aria-hidden="true">▦</span> Postavy</button>
+        <button class="nav-link" data-view-link="map"><span aria-hidden="true">◈</span> Mapa</button>
+        <button class="nav-link" data-view-link="inventory"><span aria-hidden="true">▤</span> Inventáře</button>
         <button class="nav-link" data-view-link="editor"><span aria-hidden="true">⌘</span> CODE editor<em id="nav-dirty" class="nav-dirty" hidden>●</em></button>
         <button class="nav-link" data-view-link="logs"><span aria-hidden="true">≡</span> Logy</button>
         <button id="open-account" class="nav-link"><span aria-hidden="true">◉</span> Herní účet</button>
@@ -38,6 +40,26 @@
         </section>
         <div id="characters" class="character-grid"></div>
         <section class="surface owned-panel"><div class="section-head"><div><h2>Postavy herního účtu</h2><p id="api-status">Připoj API token v dialogu Herní účet.</p></div><button id="load-owned" class="ghost">Načíst seznam</button></div><div id="owned-characters" class="owned-list"></div></section>
+      </section>
+
+      <section id="view-map" class="view" aria-labelledby="map-title" hidden>
+        <header class="page-head"><div><p class="eyebrow">MAPA</p><h1 id="map-title">Živá mapa <span class="live-dot"></span></h1></div><div class="map-tools"><div><label for="map-picker">Mapa</label><select id="map-picker"><option value="">Načítám mapy…</option></select></div><div><label for="map-follow">Kamera</label><select id="map-follow"><option value="">Volný pohled</option></select></div></div></header>
+        <div class="map-layout">
+          <div class="surface map-panel">
+            <div class="map-head"><div><h2 id="map-name">—</h2><p id="map-status" class="fine">Pozice běžících postav se obnovují každých 5 sekund.</p></div><div class="map-zoom"><button id="map-zoom-in" class="ghost small-button" aria-label="Přiblížit">+</button><button id="map-zoom-out" class="ghost small-button" aria-label="Oddálit">−</button><button id="map-fit" class="ghost small-button">Celá mapa</button></div></div>
+            <div id="map-canvas" class="map-canvas"><svg id="map-svg" role="img" aria-labelledby="map-name" preserveAspectRatio="xMidYMid meet"><g id="map-walls"></g><g id="map-overlay"></g></svg></div>
+            <div class="map-legend"><span><i class="legend own"></i>Postava v panelu</span><span><i class="legend saved"></i>Poslední uložená pozice</span><span><i class="legend monster"></i>Monstrum poblíž</span><span><i class="legend player"></i>Jiný hráč</span><span><i class="legend npc"></i>NPC</span><span><i class="legend door"></i>Průchod (klikni)</span></div>
+          </div>
+          <div class="surface map-side"><h2>Kde jsou postavy</h2><div id="map-characters" class="map-characters"></div><h2 class="map-side-title">Poblíž sledované postavy</h2><div id="map-nearby" class="map-nearby"><p class="fine">Vyber v poli Kamera postavu, kterou chceš sledovat.</p></div></div>
+        </div>
+      </section>
+
+      <section id="view-inventory" class="view" aria-labelledby="inventory-title" hidden>
+        <header class="page-head"><div><p class="eyebrow">INVENTÁŘE</p><h1 id="inventory-title">Inventáře a banka</h1></div><div class="inventory-tools"><label for="inventory-filter">Hledat předmět</label><input id="inventory-filter" type="search" placeholder="např. ring, hpot…" maxlength="64"></div></header>
+        <div class="inventory-layout">
+          <div class="surface"><div class="section-head compact"><h2>Zobrazit</h2></div><div id="inventory-targets" class="inventory-targets" role="list"></div><p class="fine">Běžící postavy se čtou živě. Ostatní postavy a banka se načítají z uloženého stavu účtu přes API token; mohou být o něco starší.</p></div>
+          <div id="inventory-detail" class="surface inventory-detail" aria-live="polite"><div class="empty"><h2>Vyber postavu nebo banku.</h2><p>Uvidíš vybavení, inventář a zlato.</p></div></div>
+        </div>
       </section>
 
       <section id="view-editor" class="view" aria-labelledby="editor-view-title" hidden>

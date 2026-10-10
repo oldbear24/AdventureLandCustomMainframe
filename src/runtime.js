@@ -254,6 +254,22 @@ export class Runtime {
     if (!snapshot) throw Object.assign(new Error('Postava je mrtvá nebo se odpojila.'), { status: 409 });
     return snapshot;
   }
+  // Live inventory, equipment and (inside the bank) bank packs; the caller sanitizes items.
+  async details(id) {
+    const session = this.sessions.get(id);
+    if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
+    const snapshot = await withDeadline(session.page.evaluate(() => {
+      const c = window.character;
+      if (!c || !window.socket?.connected) return null;
+      const copy = value => value && typeof value === 'object' ? JSON.parse(JSON.stringify(value)) : null;
+      return { name: c.name, ctype: c.ctype, level: c.level, gold: c.gold, isize: c.isize, map: c.map, items: copy(c.items) || [], slots: copy(c.slots), bank: copy(c.bank) };
+    }));
+    if (!snapshot) throw Object.assign(new Error('Postava se odpojila.'), { status: 409 });
+    return snapshot;
+  }
+  sessionByName(name) {
+    return [...this.sessions.values()].find(s => s.status === 'running' && s.character.name.toLowerCase() === name.toLowerCase()) || null;
+  }
   async sendTransfer(command) {
     const session = this.sessions.get(command.characterId);
     try {
@@ -308,8 +324,14 @@ export class Runtime {
         session.state = await withDeadline(session.page.evaluate(() => {
           const c = window.character;
           if (!c || !window.socket?.connected) return null;
-          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x: c.real_x ?? c.x, y: c.real_y ?? c.y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active };
+          const x = c.real_x ?? c.x, y = c.real_y ?? c.y;
+          // Nearest visible monsters and players for the live map.
+          const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
+            .map(e => ({ kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
+            .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
+          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null };
         }));
+        if (session.state) session.state.observedAt = new Date().toISOString();
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
       } catch (error) { session.state = null; this.failed(session, error); }
     }

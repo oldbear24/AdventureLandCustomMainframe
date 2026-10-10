@@ -37,6 +37,8 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - Přihlášení k Adventure Land e-mailem a heslem přímo z panelu; pro Steam účet také vložení herní cookie. Herní relace se ukládá šifrovaně, herní heslo se neukládá.
 - Pouze HTTPS: při prvním startu si aplikace sama vygeneruje self-signed certifikát, nebo použije tvůj vlastní PEM certifikát a klíč. HTTP neobsluhuje vůbec.
 - API token „Connect an AI“: výpis postav účtu, import postav a synchronizace CODE slotů. Pro spouštění přiřazeného CODE je token potřebný.
+- **Živá mapa**: skutečné zdi, zóny monster, NPC a průchody každé mapy; pozice běžících postav se obnovují každých 5 sekund i s monstry a hráči v okolí. Postavu lze sledovat kamerou, mapu přibližovat kolečkem a posouvat tažením, kliknutím na průchod přejdeš na sousední mapu. S API tokenem vidíš i poslední uloženou pozici ostatních postav účtu.
+- **Inventáře a banka**: vybavení, inventář a zlato každé postavy s hledáním předmětů podle názvu. Běžící postava se čte živě, ostatní postavy a banka z uloženého stavu účtu přes API token (může být o něco starší). Pokud stojí běžící postava v bance, banka se čte živě. Geometrie map a názvy předmětů se stahují z veřejného `https://adventure.land/data.js` (ukládají se do paměti na 6 hodin).
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 200 záznamů, panel je posuvný).
 

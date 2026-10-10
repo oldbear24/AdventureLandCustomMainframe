@@ -5,12 +5,13 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { z } from 'zod';
 import { characterSchema, scriptSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
+import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-export function createApp(config, store, runtime, account = null, gameApi = null) {
+export function createApp(config, store, runtime, account = null, gameApi = null, gameData = null) {
   const app = express(); app.disable('x-powered-by');
   const transfers = new Transfers(runtime);
   const sessions = new Map(), attempts = new Map(), gameAttempts = new Map();
@@ -126,6 +127,48 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     res.json(script);
   });
   app.get('/api/characters/:id/inventory', async (req, res) => res.json(await runtime.exclusive(async () => inventoryView(await runtime.inventory(req.params.id)))));
+  app.get('/api/maps', async (_req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    res.json(await gameData.mapList());
+  });
+  app.get('/api/maps/:name', async (req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json(await gameData.map(req.params.name));
+  });
+  const itemNames = async () => gameData ? gameData.itemNames() : {};
+  // A running character is read live; any other owned character comes from the saved account snapshot.
+  app.get('/api/inventories/:name', async (req, res) => {
+    const name = z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).parse(req.params.name);
+    const names = await itemNames();
+    const live = await runtime.exclusive(async () => {
+      const session = runtime.sessionByName(name);
+      return session ? runtime.details(session.id) : null;
+    });
+    if (live) {
+      return res.json({ name: live.name, class: String(live.ctype || ''), level: goldOf(live.level), source: 'live', observedAt: new Date().toISOString(), gold: goldOf(live.gold), size: goldOf(live.isize) || live.items.length, items: itemsView(live.items, names), equipment: equipmentView(live.slots, names) });
+    }
+    if (!gameApi?.status().configured) throw new HttpError(409, 'Postava neběží v panelu. Pro uložený inventář připoj API token.');
+    const profile = await gameApi.profile(name);
+    const items = Array.isArray(profile.inventory) ? profile.inventory : [];
+    res.json({ name: typeof profile.name === 'string' ? profile.name : name, class: typeof profile.class === 'string' ? profile.class : '', level: goldOf(profile.level), source: 'saved', observedAt: typeof profile.synchronized_at === 'string' ? profile.synchronized_at : null, gold: goldOf(profile.gold), size: goldOf(profile.inventory_slots) || items.length, items: itemsView(items, names), equipment: equipmentView(profile.equipment, names) });
+  });
+  // The game only sends bank contents to a character standing in the bank; otherwise use the saved snapshot.
+  app.get('/api/bank', async (_req, res) => {
+    const names = await itemNames();
+    const live = await runtime.exclusive(async () => {
+      for (const session of runtime.sessions.values()) {
+        if (session.status !== 'running' || !session.state?.map?.startsWith('bank')) continue;
+        const details = await runtime.details(session.id).catch(() => null);
+        if (details?.bank) return details;
+      }
+      return null;
+    });
+    if (live) return res.json({ source: 'live', observedAt: new Date().toISOString(), via: live.name, gold: goldOf(live.bank.gold), packs: packsView(live.bank, names) });
+    if (!gameApi?.status().configured) throw new HttpError(409, 'Banka je živě vidět jen s postavou v bance. Pro uložený obsah připoj API token.');
+    const bank = await gameApi.bank();
+    res.json({ source: 'saved', observedAt: typeof bank.observed_at === 'string' ? bank.observed_at : null, retrievedAt: typeof bank.retrieved_at === 'string' ? bank.retrieved_at : new Date().toISOString(), via: null, gold: goldOf(bank.gold), packs: packsView(bank.packs, names) });
+  });
   app.post('/api/transfers/prepare', async (req, res) => res.json(await transfers.prepare(transferSchema.parse(req.body), sessionFor(req).token)));
   app.post('/api/transfers/:id/confirm', async (req, res) => {
     z.object({}).strict().parse(req.body);

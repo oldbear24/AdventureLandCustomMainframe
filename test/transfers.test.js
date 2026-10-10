@@ -45,7 +45,7 @@ test('API token uses official read-only endpoint, remains encrypted and survives
   await f.login(); assert.equal((await f.request('/api/owned-characters')).status, 409);
   assert.equal((await f.request('/api/account/token', 'POST', { token: 'bad' })).status, 400);
   const connected = await f.request('/api/account/token', 'POST', { token: apiToken });
-  assert.equal(connected.status, 200); assert.deepEqual(connected.data.characters, [{ name: 'OwnedWarrior', level: 42, class: 'warrior', online: true, region: 'EU', server: 'IV', codeSlot: 'CH_owned' }]);
+  assert.equal(connected.status, 200); assert.deepEqual(connected.data.characters, [{ name: 'OwnedWarrior', level: 42, class: 'warrior', online: true, region: 'EU', server: 'IV', codeSlot: 'CH_owned', map: null, x: null, y: null }]);
   assert.equal(JSON.stringify(connected.data).includes('private-character-secret'), false);
   assert.equal((await readFile(path.join(f.directory, 'api-token.enc.json'), 'utf8')).includes(apiToken), false);
   assert.equal(JSON.stringify((await f.request('/api/dashboard')).data).includes(apiToken), false);

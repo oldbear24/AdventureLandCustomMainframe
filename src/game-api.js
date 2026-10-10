@@ -16,6 +16,12 @@ function realmOf(character) {
   const match = snapshot || assigned;
   return match ? { region: match[1], server: match[2] } : { region: null, server: null };
 }
+// Last saved position; it can lag the running game.
+function positionOf(profile) {
+  const x = Number(profile?.x), y = Number(profile?.y);
+  if (typeof profile?.map !== 'string' || !/^[a-zA-Z0-9_]{1,40}$/.test(profile.map) || !Number.isFinite(x) || !Number.isFinite(y)) return { map: null, x: null, y: null };
+  return { map: profile.map, x: Math.round(x), y: Math.round(y) };
+}
 // Separate encrypted record and key; a game-login cookie and an API token are independent.
 export class GameApi {
   constructor(config, request = fetch) {
@@ -31,7 +37,7 @@ export class GameApi {
     const result = this.queue.then(fn); this.queue = result.catch(() => {}); return result;
   }
   async requestMethod(method, args, token = this.vault.config.authCookie) {
-    if (!['mainframe_list_characters', 'list_codes', 'get_code', 'save_code'].includes(method)) throw failure(400, 'Nepovolená API metoda.');
+    if (!['mainframe_list_characters', 'mainframe_get_character', 'get_bank', 'list_codes', 'get_code', 'save_code'].includes(method)) throw failure(400, 'Nepovolená API metoda.');
     if (!token) throw failure(409, 'Nejdřív připoj API token v dialogu Herní účet.');
     let response, result;
     try {
@@ -43,7 +49,7 @@ export class GameApi {
     } catch { throw failure(502, 'API Adventure Land neodpovídá. Zkus načtení později.'); }
     if (response.status === 429 || result?.reason === 'rate_limited') throw failure(429, 'API omezuje počet požadavků. Zkus načtení později.');
     if (response.status === 401 || result?.reason === 'invalid_token') throw failure(401, 'API token není platný nebo byl odvolán.');
-    if (result?.reason === 'not_found') throw failure(404, 'Herní CODE slot neexistuje.');
+    if (result?.reason === 'not_found') throw failure(404, method === 'mainframe_get_character' ? 'Postava nepatří účtu.' : 'Herní CODE slot neexistuje.');
     if (!response.ok || !result?.success) throw failure(502, 'API Adventure Land odmítlo požadavek.');
     return result;
   }
@@ -53,7 +59,7 @@ export class GameApi {
     // Never proxy the full upstream profile, which can contain game authentication fields.
     return result.characters.filter(c => /^[a-zA-Z0-9_]{1,32}$/.test(c.character)).map(c => ({
       name: c.character, level: Number(c.level) || 0, class: typeof c.class === 'string' ? c.class : '',
-      online: !!c.profile?.online, ...realmOf(c), codeSlot: defaultSlotOf(c),
+      online: !!c.profile?.online, ...realmOf(c), codeSlot: defaultSlotOf(c), ...positionOf(c.profile),
     }));
   }
   // The game keeps one default CODE slot per character, named after its character id.
@@ -75,6 +81,22 @@ export class GameApi {
       const token = this.vault.config.authCookie;
       if (!token) throw failure(409, 'Nejdřív připoj API token v dialogu Herní účet.');
       return { characters: await this.call(token) };
+    });
+  }
+  // Saved account snapshot of one character; callers sanitize the items.
+  profile(name) {
+    if (!/^[a-zA-Z0-9_]{1,32}$/.test(name)) throw failure(400, 'Neplatné jméno postavy.');
+    return this.exclusive(async () => {
+      const result = await this.requestMethod('mainframe_get_character', { character: name });
+      if (!result.profile || typeof result.profile !== 'object') throw failure(502, 'API nevrátilo profil postavy.');
+      return result.profile;
+    });
+  }
+  bank() {
+    return this.exclusive(async () => {
+      const result = await this.requestMethod('get_bank', {});
+      if (!result.packs || typeof result.packs !== 'object') throw failure(502, 'API nevrátilo obsah banky.');
+      return result;
     });
   }
   listCodes() {
