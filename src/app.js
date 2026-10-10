@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { characterSchema, scriptSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
-import { storageView } from './runtime.js';
+import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 class HttpError extends Error {
@@ -132,6 +132,21 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   // Everything the character's CODE stored with set(name, value), read live from its game page.
   app.get('/api/characters/:id/storage', async (req, res) => res.json(storageView(await runtime.exclusive(() => runtime.storage(req.params.id)))));
+  const storageKey = z.string().min(1).max(STORAGE_KEY_LIMIT);
+  // Saves the edited value back; it must be valid JSON because CODE get() parses it.
+  app.put('/api/characters/:id/storage/:key', async (req, res) => {
+    const key = storageKey.parse(req.params.key);
+    const { value } = z.object({ value: z.string().max(500_000) }).strict().parse(req.body);
+    let parsed;
+    try { parsed = JSON.parse(value); } catch { throw new HttpError(400, 'Hodnota musí být platný JSON (text v uvozovkách, číslo, true/false, null, pole nebo objekt).'); }
+    await runtime.exclusive(() => runtime.setStorage(req.params.id, key, JSON.stringify(parsed)));
+    res.json({ ok: true });
+  });
+  app.delete('/api/characters/:id/storage/:key', async (req, res) => {
+    const key = storageKey.parse(req.params.key);
+    res.json({ removed: await runtime.exclusive(() => runtime.setStorage(req.params.id, key, null)) });
+  });
+  app.delete('/api/characters/:id/storage', async (req, res) => res.json({ removed: await runtime.exclusive(() => runtime.clearStorage(req.params.id)) }));
   app.get('/api/characters/:id/inventory', async (req, res) => res.json(await runtime.exclusive(async () => inventoryView(await runtime.inventory(req.params.id)))));
   app.get('/api/maps', async (_req, res) => {
     if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');

@@ -269,6 +269,34 @@ try {
   assert.equal(await page.locator('#storage-filter').inputValue(), 'leader');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   await page.screenshot({ path: 'test-results/storage-mobile.png', fullPage: true });
+  // Editing writes compact JSON back for CODE get(); invalid JSON is refused before it leaves the panel.
+  await page.locator('#storage-filter').fill('farm');
+  await page.locator('[data-storage=edit][data-key=farm_state]').click();
+  await page.locator('.storage-editor').fill('{ "map": "halloween", "kills": 13 }');
+  await page.locator('#storage-filter').fill('nothing matches');
+  assert.equal(await page.locator('.storage-editor').inputValue(), '{ "map": "halloween", "kills": 13 }');
+  await page.locator('#storage-filter').fill('farm');
+  await page.locator('.storage-editor').fill('{ map: 1 }');
+  await page.locator('[data-storage=save]').click();
+  assert.match(await page.locator('#storage-error').textContent(), /Neplatný JSON/);
+  await page.locator('.storage-editor').fill('{ "map": "halloween", "kills": 13 }');
+  await page.locator('[data-storage=save]').click();
+  await page.locator('.storage-editor').waitFor({ state: 'detached' });
+  assert.equal(await gamePage.evaluate(() => localStorage.getItem('cstore_farm_state')), '{"map":"halloween","kills":13}');
+  assert.match(await page.locator('#storage-list').textContent(), /"kills": 13/);
+  await page.screenshot({ path: 'test-results/storage-edited-mobile.png', fullPage: true });
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-storage=delete][data-key=farm_state]').click();
+  await page.waitForFunction(() => document.querySelector('#storage-from').textContent.includes('2 hodnoty'));
+  assert.equal(await gamePage.evaluate(() => localStorage.getItem('cstore_farm_state')), null);
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.locator('#clear-storage').click();
+  assert.equal(await gamePage.evaluate(() => localStorage.getItem('cstore_leader')), '"TestWarrior"');
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#clear-storage').click();
+  await page.waitForFunction(() => document.querySelector('#storage-from').textContent.includes('0 hodnot'));
+  assert.deepEqual(await gamePage.evaluate(() => [localStorage.getItem('cstore_leader'), localStorage.getItem('cstore_extra'), localStorage.getItem('game_setting')]), [null, null, 'hidden']);
+  assert.equal(await page.locator('#clear-storage').isDisabled(), true);
   await page.locator('#close-storage').click();
   await page.setViewportSize({ width: 1440, height: 1100 });
   const scriptId = store.snapshot().scripts[0].id;
@@ -323,7 +351,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, live map over WebSocket and inventories/bank, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map over WebSocket and inventories/bank, CODE set() storage view/edit/delete, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   live.close(); app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

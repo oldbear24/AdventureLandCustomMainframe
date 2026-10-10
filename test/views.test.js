@@ -170,6 +170,35 @@ test('values stored by CODE set() are listed live, pretty-printed and bounded', 
   f.runtime.sessions.clear();
   const many = storageView(Array.from({ length: 600 }, (_, i) => ({ key: `k${i}`, value: String(i) })).concat([null, { key: 1, value: 'x' }]));
   assert.equal(many.entries.length, 500); assert.equal(many.total, 600);
+  const flags = storageView([{ key: 'k'.repeat(201), value: '1' }, { key: 'hidden', value: '"[REDACTED]"' }, { key: 'ok', value: '1' }]).entries;
+  assert.deepEqual(flags.map(e => [e.key.slice(0, 6), e.deletable, e.editable]), [['hidden', true, false], ['kkkkkk', false, false], ['ok', true, true]]);
+  assert.equal(big.editable, false); assert.equal(big.deletable, true); assert.equal(farm.editable, true);
+});
+
+test('values stored by CODE set() can be edited, deleted and cleared', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.equal((await f.request('/api/characters/id-1/storage/farm', 'PUT', { value: '1' })).status, 409);
+  const storage = new Map([['cstore_farm', '{"kills":1}'], ['cstore_a/b c', '"x"'], ['cstore_old', '2'], ['activity', 'game setting']]);
+  const localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) };
+  const page = { evaluate: async (fn, arg) => {
+    const previous = globalThis.window; globalThis.window = { localStorage: new Proxy(localStorage, { ownKeys: () => [...storage.keys()], getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }) }) };
+    try { return fn(arg); } finally { globalThis.window = previous; }
+  } };
+  f.runtime.sessions.set('id-1', { id: 'id-1', status: 'running', page, character: { name: 'Runner' } });
+  assert.equal((await f.request('/api/characters/id-1/storage/farm', 'PUT', { value: '{\n  "kills": 5,\n  "map": "main"\n}' })).status, 200);
+  assert.equal(storage.get('cstore_farm'), '{"kills":5,"map":"main"}');
+  assert.equal((await f.request('/api/characters/id-1/storage/new', 'PUT', { value: '"leader"' })).status, 200);
+  assert.equal(storage.get('cstore_new'), '"leader"');
+  const invalid = await f.request('/api/characters/id-1/storage/farm', 'PUT', { value: '{kills: 5}' });
+  assert.equal(invalid.status, 400); assert.match(invalid.data.error, /JSON/);
+  assert.equal((await f.request('/api/characters/id-1/storage/farm', 'PUT', { value: '1', extra: true })).status, 400);
+  assert.equal((await f.request(`/api/characters/id-1/storage/${'k'.repeat(201)}`, 'PUT', { value: '1' })).status, 400);
+  assert.deepEqual((await f.request(`/api/characters/id-1/storage/${encodeURIComponent('a/b c')}`, 'DELETE', {})).data, { removed: true });
+  assert.equal(storage.has('cstore_a/b c'), false);
+  assert.deepEqual((await f.request('/api/characters/id-1/storage/missing', 'DELETE', {})).data, { removed: false });
+  assert.deepEqual((await f.request('/api/characters/id-1/storage', 'DELETE', {})).data, { removed: 3 });
+  assert.deepEqual([...storage.keys()], ['activity']);
+  f.runtime.sessions.clear();
 });
 test('game state is sanitized before it reaches the panel', () => {
   const state = sanitizeState(JSON.stringify({ name: 'A'.repeat(100), level: 5, x: 1.5, y: 'bad', nearby: [{ kind: 'boss', name: 'goo', x: 1.4, y: 2, target: 1, extra: 'x' }, { x: 'nope' }], secret: 'x' }));

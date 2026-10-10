@@ -456,28 +456,64 @@ async function openTransfer(id) {
     transferFields(); if (!$('transfer-dialog').open) $('transfer-dialog').showModal();
   } catch (error) { toast(error.message, true); }
 }
-let storageCharacterId = '', storageData = null;
+let storageCharacterId = '', storageData = null, storageEditing = null, storageDraft = '';
 function renderStorage() {
   if (!storageData) return;
   const filter = $('storage-filter').value.trim().toLowerCase();
-  const shown = storageData.entries.filter(e => !filter || e.key.toLowerCase().includes(filter) || e.value.toLowerCase().includes(filter));
+  const shown = storageData.entries.filter(e => e.key === storageEditing || !filter || e.key.toLowerCase().includes(filter) || e.value.toLowerCase().includes(filter));
   const bytes = value => value < 1024 ? `${number(value)} B` : `${(value / 1024).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} kB`;
   const limited = storageData.total > storageData.entries.length ? ` · zobrazeno prvních ${number(storageData.entries.length)}` : '';
   const name = dashboard?.characters.find(c => c.id === storageCharacterId)?.name || '';
   $('storage-from').textContent = `${name} · ${number(storageData.total)} ${storageData.total === 1 ? 'hodnota' : storageData.total >= 2 && storageData.total <= 4 ? 'hodnoty' : 'hodnot'} · ${bytes(storageData.size)}${limited} · načteno ${new Date(storageData.observedAt).toLocaleTimeString('cs-CZ')}`;
+  $('clear-storage').disabled = !storageData.total;
   if (!storageData.entries.length) { $('storage-list').innerHTML = '<p class="empty-note">CODE zatím nic neuložil. Hodnoty vzniknou voláním <code>set("klíč", hodnota)</code>.</p>'; return; }
   if (!shown.length) { $('storage-list').innerHTML = '<p class="empty-note">Žádná hodnota neodpovídá hledání.</p>'; return; }
-  $('storage-list').innerHTML = shown.map(e => `<details class="storage-entry" ${shown.length <= 8 ? 'open' : ''}><summary><code>${escape(e.key)}</code><small>${bytes(e.size)}${e.valid ? '' : ' · neplatný JSON'}</small></summary><pre>${escape(e.value)}${e.truncated ? '\n…zkráceno' : ''}</pre></details>`).join('');
+  const body = e => e.key === storageEditing
+    ? `<textarea class="storage-editor" spellcheck="false" aria-label="Hodnota ${escape(e.key)} jako JSON">${escape(storageDraft)}</textarea><div class="storage-actions"><span class="fine">JSON — text v uvozovkách, číslo, true/false, null, pole nebo objekt.</span><button class="ghost small-button" data-storage="cancel">Zrušit</button><button class="primary small-button" data-storage="save" data-key="${escape(e.key)}">Uložit</button></div>`
+    : `<pre>${escape(e.value)}${e.truncated ? '\n…zkráceno' : ''}</pre><div class="storage-actions"><span class="fine">${!e.deletable ? 'Klíč nelze upravit ani smazat (zkrácený nebo skrytý).' : !e.editable ? 'Hodnotu nelze upravit (zkrácená nebo obsahuje skrytý údaj).' : ''}</span><button class="ghost small-button" data-storage="edit" data-key="${escape(e.key)}" ${e.editable && !storageEditing ? '' : 'disabled'}>Upravit</button><button class="ghost danger small-button" data-storage="delete" data-key="${escape(e.key)}" ${e.deletable ? '' : 'disabled'}>Smazat</button></div>`;
+  $('storage-list').innerHTML = shown.map(e => `<details class="storage-entry" ${shown.length <= 8 || e.key === storageEditing ? 'open' : ''}><summary><code>${escape(e.key)}</code><small>${bytes(e.size)}${e.valid ? '' : ' · neplatný JSON'}</small></summary>${body(e)}</details>`).join('');
 }
 async function openStorage(id) {
   try {
     const data = await api(`/characters/${id}/storage`);
-    if (storageCharacterId !== id) $('storage-filter').value = '';
+    if (storageCharacterId !== id) { $('storage-filter').value = ''; storageEditing = null; }
     storageCharacterId = id; storageData = data; $('storage-error').textContent = '';
+    // A value being edited keeps its draft across refreshes; it is dropped once CODE removed the key.
+    if (storageEditing && !data.entries.some(e => e.key === storageEditing && e.editable)) storageEditing = null;
     renderStorage(); if (!$('storage-dialog').open) $('storage-dialog').showModal();
   } catch (error) { if ($('storage-dialog').open) $('storage-error').textContent = error.message; else toast(error.message, true); }
 }
+const storageUrl = key => `/characters/${storageCharacterId}/storage${key === undefined ? '' : `/${encodeURIComponent(key)}`}`;
+$('storage-list').addEventListener('input', event => { if (event.target.matches('.storage-editor')) storageDraft = event.target.value; });
+$('storage-list').addEventListener('click', async event => {
+  const button = event.target.closest('button[data-storage]'); if (!button) return;
+  const { storage: action, key } = button.dataset;
+  $('storage-error').textContent = '';
+  if (action === 'edit') { storageEditing = key; storageDraft = storageData.entries.find(e => e.key === key)?.value ?? ''; renderStorage(); return $('storage-list').querySelector('.storage-editor')?.focus(); }
+  if (action === 'cancel') { storageEditing = null; return renderStorage(); }
+  if (action === 'save') {
+    try { JSON.parse(storageDraft); } catch (error) { $('storage-error').textContent = `Neplatný JSON: ${error.message}`; return; }
+    button.disabled = true;
+    try { await api(storageUrl(key), 'PUT', { value: storageDraft }); storageEditing = null; toast(`Hodnota ${key} uložena.`); await openStorage(storageCharacterId); }
+    catch (error) { $('storage-error').textContent = error.message; button.disabled = false; }
+    return;
+  }
+  if (action === 'delete') {
+    if (!confirm(`Smazat uloženou hodnotu „${key}“? CODE ji pak přes get() dostane jako null.`)) return;
+    button.disabled = true;
+    try { await api(storageUrl(key), 'DELETE', {}); if (storageEditing === key) storageEditing = null; toast(`Hodnota ${key} smazána.`); await openStorage(storageCharacterId); }
+    catch (error) { $('storage-error').textContent = error.message; button.disabled = false; }
+  }
+});
+$('clear-storage').addEventListener('click', async () => {
+  const name = dashboard?.characters.find(c => c.id === storageCharacterId)?.name || 'postavy';
+  if (!confirm(`Smazat všechny hodnoty uložené CODE postavy ${name}? Nelze vrátit.`)) return;
+  $('clear-storage').disabled = true;
+  try { const { removed } = await api(storageUrl(), 'DELETE', {}); storageEditing = null; toast(`Smazáno ${number(removed)} ${removed === 1 ? 'hodnota' : removed >= 2 && removed <= 4 ? 'hodnoty' : 'hodnot'}.`); await openStorage(storageCharacterId); }
+  catch (error) { $('storage-error').textContent = error.message; renderStorage(); }
+});
 $('close-storage').addEventListener('click', () => $('storage-dialog').close());
+$('storage-dialog').addEventListener('close', () => { storageEditing = null; });
 $('storage-filter').addEventListener('input', renderStorage);
 $('reload-storage').addEventListener('click', async () => {
   $('reload-storage').disabled = true;

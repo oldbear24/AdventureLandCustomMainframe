@@ -46,12 +46,17 @@ export function sanitizeState(raw) {
 export const STORAGE_PREFIX = 'cstore_';
 export const STORAGE_LIMIT = 500;
 export const STORAGE_VALUE_LIMIT = 64_000;
+export const STORAGE_KEY_LIMIT = 200;
+const REDACTED = '[REDACTED]';
 export function storageView(raw) {
   const entries = (Array.isArray(raw) ? raw : []).filter(e => e && typeof e.key === 'string' && typeof e.value === 'string');
   const view = entries.slice(0, STORAGE_LIMIT).map(({ key, value }) => {
     let text = value, valid = true;
     try { text = JSON.stringify(JSON.parse(value), null, 2) ?? value; } catch { valid = false; }
-    return { key: key.slice(0, 200), size: value.length, valid, value: text.slice(0, STORAGE_VALUE_LIMIT), truncated: text.length > STORAGE_VALUE_LIMIT };
+    const truncated = text.length > STORAGE_VALUE_LIMIT;
+    // A shortened or redacted key cannot address the stored value; a shortened or redacted value cannot be saved back intact.
+    const deletable = key.length > 0 && key.length <= STORAGE_KEY_LIMIT && !key.includes(REDACTED);
+    return { key: key.slice(0, STORAGE_KEY_LIMIT), size: value.length, valid, value: text.slice(0, STORAGE_VALUE_LIMIT), truncated, deletable, editable: deletable && !truncated && !value.includes(REDACTED) };
   }).sort((a, b) => a.key.localeCompare(b.key));
   return { entries: view, total: entries.length, size: entries.reduce((sum, e) => sum + e.key.length + e.value.length, 0), observedAt: new Date().toISOString() };
 }
@@ -335,6 +340,26 @@ export class Runtime extends EventEmitter {
     const entries = await withDeadline(session.page.evaluate(prefix => Object.keys(window.localStorage).filter(key => key.startsWith(prefix))
       .map(key => ({ key: key.slice(prefix.length), value: window.localStorage.getItem(key) })), STORAGE_PREFIX));
     return entries.map(e => ({ ...e, key: this.redact(e.key), value: typeof e.value === 'string' ? this.redact(e.value) : e.value }));
+  }
+  // Writes a JSON text exactly as CODE set(key, value) would; null removes the key like set(key, undefined).
+  async setStorage(id, key, value) {
+    const session = this.sessions.get(id);
+    if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
+    return withDeadline(session.page.evaluate(({ name, text }) => {
+      const existed = window.localStorage.getItem(name) !== null;
+      if (text === null) window.localStorage.removeItem(name); else window.localStorage.setItem(name, text);
+      return existed;
+    }, { name: STORAGE_PREFIX + key, text: value }));
+  }
+  // Removes every value CODE saved with set(); other game client keys stay untouched.
+  async clearStorage(id) {
+    const session = this.sessions.get(id);
+    if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
+    return withDeadline(session.page.evaluate(prefix => {
+      const keys = Object.keys(window.localStorage).filter(key => key.startsWith(prefix));
+      for (const key of keys) window.localStorage.removeItem(key);
+      return keys.length;
+    }, STORAGE_PREFIX));
   }
   sessionByName(name) {
     return [...this.sessions.values()].find(s => s.status === 'running' && s.character.name.toLowerCase() === name.toLowerCase()) || null;
