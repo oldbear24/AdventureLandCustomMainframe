@@ -61,7 +61,8 @@ export function storageView(raw) {
   return { entries: view, total: entries.length, size: entries.reduce((sum, e) => sum + e.key.length + e.value.length, 0), observedAt: new Date().toISOString() };
 }
 
-// Emits 'state' (id, state) whenever a running character reports a new position.
+// Emits 'state' (id, state) whenever a running character reports a new position,
+// and 'log' (entry) for every new log entry.
 export class Runtime extends EventEmitter {
   constructor(config, store, browserType = chromium, gameApi = null) {
     super();
@@ -73,8 +74,10 @@ export class Runtime extends EventEmitter {
   }
   log(id, level, message) {
     const text = this.redact(message);
-    this.logs.push({ id: ++this.sequence, at: new Date().toISOString(), characterId: id, level, message: text.slice(0, 4000) });
+    const entry = { id: ++this.sequence, at: new Date().toISOString(), characterId: id, level, message: text.slice(0, 4000) };
+    this.logs.push(entry);
     if (this.logs.length > LOG_LIMIT) this.logs.shift();
+    this.emit('log', entry);
   }
   redact(message) {
     let text = String(message);

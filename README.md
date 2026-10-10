@@ -30,7 +30,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 
 - Správa až 4 postav: region, server, přiřazený skript, start, stop, opětovné načtení CODE.
 - Společné uložené CODE sloty s prohlížečem: automatické načítání změn přibližně každých 30 sekund a ukládání z panelu do stejného herního slotu. Místní skripty slouží jako návrhy.
-- Stav postav, HP/MP, level, mapa, gold, stav CODE a živé herní/CODE logy.
+- Stav postav, HP/MP, level, mapa, gold, stav CODE a živé herní/CODE logy (nové záznamy přicházejí okamžitě přes WebSocket `/api/live`; při výpadku spojení se načítají s obnovou každých 5 sekund).
 - Kontrola vlastnictví a online stavu před připojením. Automatické opakování při výpadku s prodlevou 10 sekund až 5 minut.
 - Volitelný autostart uložených postav po restartu. Tlačítko Stop autostart dané postavy vypne.
 - Přihlášení do panelu jménem a heslem; HttpOnly session cookie, omezení pokusů o přihlášení, kontrola Origin a validace vstupů.
@@ -161,7 +161,7 @@ PUBLIC_ORIGIN=https://al.tvoje-domena.cz
 docker compose up -d --force-recreate
 ```
 
-Živá mapa používá WebSocket na `/api/live`. Caddy ho přeposílá automaticky; u jiné proxy (např. nginx) povol upgrade spojení (`proxy_http_version 1.1`, hlavičky `Upgrade` a `Connection: upgrade`) a zachovej hlavičku `Host`. Bez toho mapa funguje dál, jen s obnovou každých 5 sekund.
+Živá mapa a logy používají WebSocket na `/api/live`. Caddy ho přeposílá automaticky; u jiné proxy (např. nginx) povol upgrade spojení (`proxy_http_version 1.1`, hlavičky `Upgrade` a `Connection: upgrade`) a zachovej hlavičku `Host`. Bez toho mapa i logy fungují dál, jen s obnovou každých 5 sekund.
 
 Pokud proxy běží v jiném kontejneru, její `127.0.0.1` není hostitel: připoj ji do stejné Docker sítě, proxyuj na `https://mainframe:3000` a přidej `mainframe` do `TLS_HOSTNAMES`. Port 3000 nevyžaduje veřejné zpřístupnění. Panel je pro jednoho správce; CODE spouštěj pouze vlastní nebo důvěryhodný, protože má oprávnění tvého herního účtu.
 

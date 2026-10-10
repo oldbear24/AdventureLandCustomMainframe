@@ -200,9 +200,10 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     z.object({}).strict().parse(req.body);
     res.json(await transfers.confirm(z.uuid().parse(req.params.id), sessionFor(req).token));
   });
-  app.get('/api/dashboard', (_req, res) => res.json({
+  // A panel with a live WebSocket receives logs there and asks for the dashboard without them (?logs=0).
+  app.get('/api/dashboard', (req, res) => res.json({
     characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
-    sessions: runtime.snapshot(), logs: runtime.logs,
+    sessions: runtime.snapshot(), logs: req.query.logs === '0' ? undefined : runtime.logs,
     config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters, notifications: runtime.notifier?.status() || { discord: false, telegram: false } },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
     gameApi: gameApi?.status() || { configured: false },

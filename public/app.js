@@ -242,6 +242,7 @@ function updateEditingHeader() {
 function scrollLogsToBottom() { $('logs').scrollTop = $('logs').scrollHeight; $('logs-bottom').hidden = true; }
 function renderLogs() {
   const filter = $('log-filter').value, element = $('logs');
+  $('logs-mode').textContent = `Posledních 200 záznamů · ${liveConnected ? 'živě přes WebSocket' : 'obnova každých 5 sekund'}`;
   const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 70;
   const logs = dashboard.logs.filter(l => filter === 'all' || (filter === 'system' ? !l.characterId : l.characterId === filter));
   element.innerHTML = logs.length ? logs.map(l => `<div class="log-line ${l.level === 'error' ? 'error' : ''}"><span class="log-time">${new Date(l.at).toLocaleTimeString('cs-CZ')}</span><span class="log-name">${escape(dashboard.characters.find(c => c.id === l.characterId)?.name || 'SYSTEM')}</span><div class="log-message">${escape(l.message)}</div></div>`).join('') : '<span class="log-time">Zatím žádné logy. Spusť postavu a sleduj její běh.</span>';
@@ -249,7 +250,11 @@ function renderLogs() {
 }
 async function refresh(initial = false) {
   if (polling) return; polling = true;
-  try { dashboard = await api('/dashboard'); active = true; $('login').hidden = true; $('panel').hidden = false; render(); connectLive(); }
+  try {
+    // While the WebSocket is open it delivers the logs, so the poll skips them and keeps the current ones.
+    const next = await api(liveConnected ? '/dashboard?logs=0' : '/dashboard');
+    if (!Array.isArray(next.logs) || liveConnected) next.logs = dashboard?.logs || [];
+    dashboard = next; active = true; $('login').hidden = true; $('panel').hidden = false; render(); connectLive(); }
   catch (error) { if (!initial && active) { $('stat-status').textContent = 'Nedostupné'; $('last-update').textContent = 'Spojení s panelem bylo přerušeno'; } }
   finally { polling = false; }
 }
@@ -860,15 +865,17 @@ function connectLive() {
   clearTimeout(liveTimer);
   const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`);
   live = socket;
-  socket.onopen = () => { liveRetry = 0; liveConnected = true; scheduleLiveRender(); };
+  socket.onopen = () => { liveRetry = 0; liveConnected = true; scheduleLiveRender(); scheduleLogRender(); };
   socket.onmessage = event => {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
-    applyLive(message.type === 'snapshot' ? message.sessions : message.states);
+    if (message.type === 'snapshot') { if (dashboard && Array.isArray(message.logs)) { dashboard.logs = message.logs.slice(-LOG_LIMIT); scheduleLogRender(); } applyLive(message.sessions); }
+    else if (message.type === 'logs') applyLogs(message.logs);
+    else applyLive(message.states);
   };
   socket.onclose = event => {
     if (live !== socket) return;
-    live = null; liveConnected = false; scheduleLiveRender();
+    live = null; liveConnected = false; scheduleLiveRender(); scheduleLogRender();
     if (active && event.code !== 4401) liveTimer = setTimeout(connectLive, Math.min(30_000, 1000 * 2 ** liveRetry++));
   };
 }
@@ -884,6 +891,21 @@ function applyLive(states) {
     if (session) session.state = state;
   }
   scheduleLiveRender();
+}
+// New entries are appended by id; one already received (e.g. also in the snapshot) is skipped.
+const LOG_LIMIT = 200;
+function applyLogs(logs) {
+  if (!dashboard || !Array.isArray(logs)) return;
+  const last = dashboard.logs.at(-1)?.id ?? 0;
+  const fresh = logs.filter(l => l.id > last);
+  if (!fresh.length) return;
+  dashboard.logs = dashboard.logs.concat(fresh).slice(-LOG_LIMIT);
+  scheduleLogRender();
+}
+let logFrame = 0;
+function scheduleLogRender() {
+  if (logFrame) return;
+  logFrame = requestAnimationFrame(() => { logFrame = 0; if (dashboard && !$('view-logs').hidden) renderLogs(); });
 }
 // At most one map redraw per animation frame, and none while the map is being dragged.
 function scheduleLiveRender() {

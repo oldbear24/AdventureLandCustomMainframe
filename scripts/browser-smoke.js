@@ -227,6 +227,11 @@ try {
   await page.locator('#map-fit').click();
   await page.locator('#map-overlay [data-door=bank]').click();
   await page.waitForFunction(() => document.querySelector('#map-name').textContent === 'The Bank');
+  // Logs arrive over the same WebSocket; the dashboard poll leaves them out while it is connected.
+  await page.locator('[data-view-link=logs]').click();
+  await page.waitForFunction(() => document.querySelector('#logs-mode').textContent.includes('WebSocket'));
+  await gamePage.evaluate(() => console.log('live log line'));
+  await page.waitForFunction(() => document.querySelector('#logs').textContent.includes('live log line'), null, { timeout: 3000 });
   // Inventories: running character live, other account character and bank from the saved snapshot.
   await page.locator('[data-view-link=inventory]').click();
   await page.locator('[data-inventory=TestWarrior]').click();
@@ -351,7 +356,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, live map over WebSocket and inventories/bank, CODE set() storage view/edit/delete, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, CODE set() storage view/edit/delete, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   live.close(); app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

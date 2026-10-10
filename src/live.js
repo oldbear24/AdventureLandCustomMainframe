@@ -1,12 +1,15 @@
 import { WebSocketServer } from 'ws';
+import { LOG_LIMIT } from './runtime.js';
 
 const FLUSH_INTERVAL = 200;
 const PING_INTERVAL = 30_000;
+const MAX_BUFFERED = 1_000_000;
 
-// Pushes character state changes to logged-in panels over a WebSocket at /api/live.
+// Pushes character state changes and new log entries to logged-in panels over a WebSocket at /api/live.
 export function attachLive(server, app, runtime) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
   const pending = new Map();
+  let pendingLogs = [];
   server.on('upgrade', (req, socket, head) => {
     // An exception in an upgrade listener would crash the process; refuse the request instead.
     try { upgrade(req, socket, head); } catch { socket.destroy(); }
@@ -25,17 +28,31 @@ export function attachLive(server, app, runtime) {
       ws.on('pong', () => { ws.alive = true; });
       ws.on('message', () => {});
       ws.on('error', () => {});
-      ws.send(JSON.stringify({ type: 'snapshot', sessions: runtime.snapshot().map(({ id, state }) => ({ id, state })) }));
+      ws.send(JSON.stringify({ type: 'snapshot', sessions: runtime.snapshot().map(({ id, state }) => ({ id, state })), logs: runtime.logs }));
     });
   };
   // Coalesce frequent updates: each character sends at most one state per flush.
+  // Log entries are batched per flush too, but none may be skipped.
   const onState = (id, state) => { pending.set(id, state); };
-  runtime.on('state', onState);
+  const onLog = entry => { pendingLogs.push(entry); if (pendingLogs.length > LOG_LIMIT) pendingLogs.shift(); };
+  runtime.on('state', onState); runtime.on('log', onLog);
+  const broadcast = message => {
+    for (const ws of wss.clients) {
+      if (ws.readyState !== ws.OPEN) continue;
+      // A client that cannot keep up is dropped; it reconnects and gets a fresh snapshot without gaps.
+      if (ws.bufferedAmount >= MAX_BUFFERED) { ws.terminate(); continue; }
+      ws.send(message);
+    }
+  };
   const flush = setInterval(() => {
-    if (!pending.size) return;
-    const message = JSON.stringify({ type: 'states', states: [...pending].map(([id, state]) => ({ id, state })) });
-    pending.clear();
-    for (const ws of wss.clients) if (ws.readyState === ws.OPEN && ws.bufferedAmount < 1_000_000) ws.send(message);
+    if (pending.size) {
+      const message = JSON.stringify({ type: 'states', states: [...pending].map(([id, state]) => ({ id, state })) });
+      pending.clear(); broadcast(message);
+    }
+    if (pendingLogs.length) {
+      const message = JSON.stringify({ type: 'logs', logs: pendingLogs });
+      pendingLogs = []; broadcast(message);
+    }
   }, FLUSH_INTERVAL); flush.unref();
   // Drop dead connections and those whose panel session expired or logged out.
   const check = setInterval(() => {
@@ -46,7 +63,7 @@ export function attachLive(server, app, runtime) {
   }, PING_INTERVAL); check.unref();
   app.locals.closeLive = token => { for (const ws of wss.clients) if (ws.token === token) ws.close(4401, 'logout'); };
   let closed = false;
-  const close = () => { if (closed) return; closed = true; clearInterval(flush); clearInterval(check); runtime.off('state', onState); for (const ws of wss.clients) ws.terminate(); wss.close(); };
+  const close = () => { if (closed) return; closed = true; clearInterval(flush); clearInterval(check); runtime.off('state', onState); runtime.off('log', onLog); for (const ws of wss.clients) ws.terminate(); wss.close(); };
   server.on('close', close);
   return { wss, close };
 }

@@ -207,7 +207,7 @@ test('game state is sanitized before it reaches the panel', () => {
   assert.equal('secret' in state, false);
   assert.equal(sanitizeState('{broken'), null); assert.equal(sanitizeState('x'.repeat(70_000)), null);
 });
-test('live WebSocket requires panel session and Origin, pushes state and closes on logout', async t => {
+test('live WebSocket requires panel session and Origin, pushes state and logs and closes on logout', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-live-'));
   const config = configFromEnv({ ADMIN_PASSWORD: 'fixture-password-long-enough', DATA_DIR: directory });
   const store = new Store(directory); await store.init();
@@ -231,9 +231,19 @@ test('live WebSocket requires panel session and Origin, pushes state and closes 
   ws.on('message', data => messages.push(JSON.parse(data)));
   await once(ws, 'open');
   const waitFor = async predicate => { for (let i = 0; i < 50 && !messages.some(predicate); i++) await new Promise(resolve => setTimeout(resolve, 20)); return messages.find(predicate); };
-  assert.deepEqual((await waitFor(m => m.type === 'snapshot')).sessions, []);
+  const snapshot = await waitFor(m => m.type === 'snapshot');
+  assert.deepEqual(snapshot.sessions, []); assert.deepEqual(snapshot.logs, runtime.logs);
   runtime.emit('state', 'id-1', { x: 1 }); runtime.emit('state', 'id-1', { x: 2 }); runtime.emit('state', 'id-2', null);
   assert.deepEqual((await waitFor(m => m.type === 'states')).states, [{ id: 'id-1', state: { x: 2 } }, { id: 'id-2', state: null }]);
+  // Every log entry is pushed, batched and in order.
+  runtime.log('id-1', 'info', 'first'); runtime.log(null, 'error', 'second');
+  const logs = (await waitFor(m => m.type === 'logs')).logs;
+  assert.deepEqual(logs.map(l => [l.characterId, l.level, l.message]), [['id-1', 'info', 'first'], [null, 'error', 'second']]);
+  assert.ok(logs[1].id > logs[0].id);
+  // The dashboard leaves logs out on request, for a panel that receives them over the WebSocket.
+  const dashboard = async query => (await fetch(`${origin}/api/dashboard${query}`, { headers: { Cookie: cookie } })).json();
+  assert.equal((await dashboard('?logs=0')).logs, undefined);
+  assert.equal((await dashboard('')).logs.at(-1).message, 'second');
   const closed = once(ws, 'close');
   await fetch(`${origin}/api/logout`, { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal((await closed)[0], 4401);
