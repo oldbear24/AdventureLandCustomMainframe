@@ -136,6 +136,11 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     res.set('Cache-Control', 'private, max-age=3600');
     res.json(await gameData.map(req.params.name));
   });
+  app.get('/api/conditions', async (_req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json(await gameData.conditions());
+  });
   const itemNames = async () => gameData ? gameData.itemNames() : {};
   // A running character is read live; any other owned character comes from the saved account snapshot.
   app.get('/api/inventories/:name', async (req, res) => {

@@ -11,6 +11,7 @@ import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
 import { createApp } from '../src/app.js';
 import { equipmentView, itemView, packsView } from '../src/inventory.js';
+import { conditionDefinitions, conditionsView } from '../src/conditions.js';
 
 const apiToken = `mcp_${'a'.repeat(43)}`;
 const G = {
@@ -23,6 +24,7 @@ const G = {
   geometry: { main: { min_x: -100, max_x: 200, min_y: -80, max_y: 120, x_lines: [[0, -10, 10], ['bad']], y_lines: [[5, -20, 20]] }, bank: { min_x: 0, max_x: 10, min_y: 0, max_y: 10, x_lines: [], y_lines: [] } },
   npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo' }, bee: { name: 'Bee' } },
   items: { hpot0: { name: 'Health Potion', type: 'pot' }, ringsj: { name: 'Ring of Strength', type: 'ring' } },
+  conditions: { mluck: { name: 'Good Luck', buff: true, explanation: 'Lucked!' }, poisoned: { name: 'Poison', debuff: true, explanation: 'Reduces attack speed by 10%.' }, monsterhunt: { name: 'On The Hunt', explanation: 'Tracking a target.' } },
 };
 const dataJs = `var G=${JSON.stringify(G)};`;
 
@@ -55,6 +57,17 @@ test('items are whitelisted and named', () => {
   assert.deepEqual(packsView({ gold: 5, items10: [], items2: [null], owner: 'x' }).map(p => p.name), ['items2', 'items10']);
 });
 
+test('active conditions are whitelisted and classified', () => {
+  assert.deepEqual(conditionsView({ poisoned: { ms: 4200.4, f: 'Goo', secret: 'x' }, monsterhunt: { ms: 1000, c: 120, id: 'goo', sn: 'EU I' }, 'bad key': { ms: 1 }, typing: 5, burned: { ms: 900, intensity: 75, f: '<img>' } }), [
+    { key: 'burned', ms: 900, from: null, count: null, target: null, intensity: 75 },
+    { key: 'monsterhunt', ms: 1000, from: null, count: 120, target: 'goo', intensity: null },
+    { key: 'poisoned', ms: 4200, from: 'Goo', count: null, target: null, intensity: null },
+  ]);
+  assert.deepEqual(conditionsView(null), []);
+  assert.deepEqual(conditionDefinitions({ stunned: { name: 'Stunned', bad: true }, mluck: { name: 'Good Luck', buff: true, explanation: 'Lucked!' }, 'x y': {}, hunt: {} }), {
+    stunned: { name: 'Stunned', kind: 'debuff', explanation: '' }, mluck: { name: 'Good Luck', kind: 'buff', explanation: 'Lucked!' }, hunt: { name: 'hunt', kind: 'neutral', explanation: '' },
+  });
+});
 async function fixture(t, upstream) {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-views-'));
   const config = configFromEnv({ ADMIN_PASSWORD: 'fixture-password-long-enough', DATA_DIR: directory });
@@ -105,6 +118,9 @@ test('saved inventories and bank come from the API token without leaking extra f
   assert.deepEqual(maps.data.maps.map(m => m.title), ['Mainland', 'The Bank']);
   assert.equal((await f.request('/api/maps/main')).data.title, 'Mainland');
   assert.equal((await f.request('/api/maps/nope')).status, 404);
+  const conditions = await f.request('/api/conditions');
+  assert.deepEqual(conditions.data.conditions.poisoned, { name: 'Poison', kind: 'debuff', explanation: 'Reduces attack speed by 10%.' });
+  assert.equal(conditions.data.conditions.monsterhunt.kind, 'neutral');
 });
 test('a running character is read live, including the bank while inside it', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });

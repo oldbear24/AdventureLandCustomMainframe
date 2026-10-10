@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { createHash, randomUUID } from 'node:crypto';
+import { conditionsView } from './conditions.js';
 
 export const GAME_ORIGIN = 'https://adventure.land';
 export const LOG_LIMIT = 200;
@@ -329,8 +330,14 @@ export class Runtime {
           const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
             .map(e => ({ kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
             .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
-          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null };
+          // Active buffs/debuffs; only scalar fields are copied, the server whitelists them.
+          const conditions = {};
+          for (const [key, value] of Object.entries(c.s || {}).slice(0, 40)) {
+            if (value && typeof value === 'object') conditions[key] = { ms: value.ms, f: value.f, c: value.c, id: value.id, intensity: value.intensity };
+          }
+          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, conditions };
         }));
+        if (session.state) session.state.conditions = conditionsView(session.state.conditions);
         if (session.state) session.state.observedAt = new Date().toISOString();
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
       } catch (error) { session.state = null; this.failed(session, error); }

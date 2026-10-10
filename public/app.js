@@ -45,6 +45,32 @@ function renderSetup() {
   $('setup').hidden = steps.every(step => step.done);
   $('setup-steps').innerHTML = steps.map((step, index) => `<li class="${step.done ? 'done' : ''}"><span class="check-mark" aria-hidden="true">${step.done ? '✓' : index + 1}</span><span class="step-text">${escape(step.title)}${step.done ? ' <span class="sr-only">(hotovo)</span>' : `<small>${escape(step.hint)}</small>`}</span>${step.done ? '' : `<button class="ghost" data-setup-action="${step.action}">${escape(step.label)}</button>`}</li>`).join('');
 }
+// Condition definitions (names, buff/debuff) come from game data; a failed load retries after a minute.
+const conditionState = { info: null, loading: false, retryAt: 0 };
+async function loadConditions() {
+  if (conditionState.info || conditionState.loading || Date.now() < conditionState.retryAt) return;
+  conditionState.loading = true;
+  try { conditionState.info = (await api('/conditions')).conditions; if (active) render(); }
+  catch { conditionState.retryAt = Date.now() + 60_000; }
+  finally { conditionState.loading = false; }
+}
+const duration = ms => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m` : `${s}s`;
+};
+function conditionChips(state) {
+  if (!state?.conditions?.length) return '';
+  const order = { debuff: 0, buff: 1, neutral: 2 };
+  const chips = state.conditions.map(condition => {
+    const info = conditionState.info?.[condition.key];
+    return { ...condition, name: info?.name || condition.key, kind: info?.kind || 'neutral', explanation: info?.explanation || '' };
+  }).sort((a, b) => order[a.kind] - order[b.kind] || a.name.localeCompare(b.name));
+  return `<div class="conditions" aria-label="Aktivní efekty">${chips.map(c => {
+    const detail = [c.target, c.count !== null && c.key === 'monsterhunt' ? `×${number(c.count)}` : '', c.intensity ? `${number(c.intensity)}/s` : ''].filter(Boolean).join(' ');
+    const title = [c.explanation, c.from ? `Od: ${c.from}` : ''].filter(Boolean).join('\n');
+    return `<span class="condition ${c.kind}"${title ? ` title="${escape(title)}"` : ''}>${escape(c.name)}${detail ? ` <b>${escape(detail)}</b>` : ''}${c.ms !== null ? `<em>${duration(c.ms)}</em>` : ''}</span>`;
+  }).join('')}</div>`;
+}
 function characterCard(c, session) {
   const state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
   const dead = status === 'running' && state?.rip;
@@ -57,6 +83,7 @@ function characterCard(c, session) {
   return `<article class="character-card ${status === 'running' ? 'is-running' : ''}">
     <div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${labels[status]}</span></div>
     <div class="meters"><div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div></div><div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div></div></div>
+    ${conditionChips(state)}
     <div class="details"><span>${state ? escape(state.map) : 'Neběží'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div>
     ${codeBox}${error ? `<p class="card-error">${escape(error)}</p>` : ''}
     <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="inventory" data-id="${c.id}">Inventář</button><button class="ghost" data-action="locate" data-id="${c.id}" ${status !== 'running' ? 'disabled' : ''}>Mapa</button><button class="ghost" data-action="logs" data-id="${c.id}">Logy</button><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
@@ -73,6 +100,7 @@ function render() {
   $('uptime').textContent = `UPTIME ${Math.floor(dashboard.uptime / 3600)}h ${Math.floor(dashboard.uptime % 3600 / 60)}m`;
   $('auth-warning').hidden = dashboard.config.authConfigured;
   renderSetup();
+  if (dashboard.sessions.some(s => s.state?.conditions?.length)) loadConditions();
   const account = dashboard.account;
   const accountText = account?.configured ? (account.email ? `Přihlášen: ${account.email}` : 'Herní relace je připravena; ověří se při spuštění postavy.') : 'Účet není připojen';
   $('account-status').textContent = accountText;

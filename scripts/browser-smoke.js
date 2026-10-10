@@ -31,7 +31,7 @@ const browserType = {
         navigations.push(url.pathname);
         assert.match(route.request().headers().cookie || '', /auth=fixture-user-fixture-auth-secret/);
         const body = url.pathname.startsWith('/server/') ? `<script>window.user_id=${JSON.stringify(accountValid ? 'fixture-user' : '')}; window.X={characters:${JSON.stringify(owned ? [{ name: 'TestWarrior', online: alreadyOnline }] : [])},servers:[{region:'EU',name:'I'}]};</script>` : url.pathname.startsWith('/character/') ? `<!doctype html><body><script>
-          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40};window.sentTransfers=[];
+          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40,s:{mluck:{ms:3540000,f:'Goldette'},poisoned:{ms:4000,f:'goo'},monsterhunt:{ms:600000,c:120,id:'goo'}}};window.sentTransfers=[];
           window.entities={m1:{type:'monster',mtype:'goo',map:'main',x:60,y:40,target:'TestWarrior'},p1:{type:'character',name:'Stranger',map:'main',x:-30,y:10}};
           window.socket={connected:true};window.code_run=false;window.code_active=false;
           window.add_log=()=>{};window.add_codelog=()=>{};
@@ -71,6 +71,7 @@ const gameApi = new GameApi(config, async (url, options) => {
 }); await gameApi.init();
 runtime.gameApi = gameApi;
 const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
+  conditions: { mluck: { name: 'Good Luck', buff: true, explanation: 'Lucked!' }, poisoned: { name: 'Poison', debuff: true, explanation: 'Poisoned.' }, monsterhunt: { name: 'On The Hunt', explanation: 'Tracking a target.' } },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
   geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
 const gameData = new GameData(async url => { assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`); });
@@ -170,6 +171,10 @@ try {
   apiAvailable = true; runtime.nextCodeSync = 0; await runtime.exclusive(() => runtime.tick());
   assert.equal(await gamePage.evaluate(() => window.code_active), true);
   assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
+  // Active buffs and debuffs: debuffs first, named from game data, with hunt details and remaining time.
+  await page.waitForFunction(() => document.querySelectorAll('.condition').length === 3 && document.querySelector('.condition')?.textContent.startsWith('Poison'));
+  assert.deepEqual(await page.locator('.condition').evaluateAll(chips => chips.map(chip => [chip.className, chip.textContent])), [['condition debuff', 'Poison4s'], ['condition buff', 'Good Luck59m'], ['condition neutral', 'On The Hunt goo ×12010m']]);
+  assert.match(await page.locator('.condition.buff').getAttribute('title'), /Od: Goldette/);
   assert.equal(await page.locator('.meter i').first().evaluate(element => Math.round(element.getBoundingClientRect().width / element.parentElement.getBoundingClientRect().width * 100)), 80);
   // Live map: own character, nearby monster/player, saved position of another character, doors switch maps.
   await runtime.exclusive(() => runtime.tick());

@@ -31,6 +31,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - Správa až 4 postav: region, server, přiřazený skript, start, stop, opětovné načtení CODE.
 - Společné uložené CODE sloty s prohlížečem: automatické načítání změn přibližně každých 30 sekund a ukládání z panelu do stejného herního slotu. Místní skripty slouží jako návrhy.
 - Stav postav, HP/MP, level, mapa, gold, stav CODE a živé herní/CODE logy.
+- **Aktivní buffy a debuffy** na kartě postavy: název efektu z herních dat, zbývající čas, debuffy červeně navrchu, buffy zeleně. U monster hunt cíl a počet, u hoření síla za sekundu; po najetí myší popis efektu a kdo ho seslal.
 - Kontrola vlastnictví a online stavu před připojením. Automatické opakování při výpadku s prodlevou 10 sekund až 5 minut.
 - Volitelný autostart uložených postav po restartu. Tlačítko Stop autostart dané postavy vypne.
 - Přihlášení do panelu jménem a heslem; HttpOnly session cookie, omezení pokusů o přihlášení, kontrola Origin a validace vstupů.
