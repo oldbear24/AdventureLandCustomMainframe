@@ -167,6 +167,9 @@ function sync() {
   scheduleSide(); requestDraw();
 }
 
+// The map is drawn at most 30 times a second; on faster displays the frames in between are skipped.
+const FRAME = 1000 / 30;
+let lastFrame = -Infinity;
 function requestDraw() { if (!drawRequest) drawRequest = requestAnimationFrame(draw); }
 function label(context, text, x, y, color, { size = 11, bold = false, align = 'center' } = {}) {
   context.font = `${bold ? '700 ' : ''}${size}px ${FONT}`; context.textAlign = align;
@@ -213,8 +216,11 @@ function circle(x, y, r, fill, stroke, lineWidth = 1, dash = null) {
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
   if (stroke) { ctx.setLineDash(dash || []); ctx.lineWidth = lineWidth; ctx.strokeStyle = stroke; ctx.stroke(); ctx.setLineDash([]); }
 }
-function draw() {
+function draw(time) {
   drawRequest = 0;
+  // A small tolerance keeps every second frame of a 60 Hz display instead of drifting to every third.
+  if (time - lastFrame < FRAME - 4) { requestDraw(); return; }
+  lastFrame = time;
   if (!width || !height) return;
   const map = view.cache.get(view.current);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
