@@ -101,6 +101,31 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
     res.json(await gameApi.characters());
   });
+  app.get('/api/code-slots', async (_req, res) => {
+    if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+    res.json({ slots: await gameApi.listCodes() });
+  });
+  app.post('/api/code-slots/:slot/import', async (req, res) => {
+    if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+    const slot = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).parse(req.params.slot);
+    const { scriptId } = z.object({ scriptId: z.uuid().nullable().default(null) }).strict().parse(req.body);
+    const script = await runtime.exclusive(async () => {
+      const snapshot = store.snapshot();
+      const selected = scriptId ? snapshot.scripts.find(s => s.id === scriptId) : snapshot.scripts.find(s => s.remoteSlot === slot);
+      if (scriptId && !selected) throw new HttpError(404, 'Místní skript neexistuje.');
+      if (snapshot.scripts.some(s => s.remoteSlot === slot && s.id !== selected?.id)) throw new HttpError(409, 'Slot už je propojen s jiným skriptem. Vyber jej v editoru.');
+      if (selected?.remoteSlot !== slot && snapshot.characters.some(c => c.scriptId === selected?.id && runtime.sessions.has(c.id))) throw new HttpError(409, 'Před změnou CODE slotu zastav přiřazené postavy.');
+      const current = await gameApi.getCode(slot);
+      const result = await store.update(state => {
+        const existing = state.scripts.find(s => s.id === selected?.id);
+        if (existing) { Object.assign(existing, current, { updatedAt: new Date().toISOString() }); return existing; }
+        if (state.scripts.length >= 100) throw new HttpError(409, 'Limit je 100 skriptů.');
+        const added = { ...current, id: randomUUID(), updatedAt: new Date().toISOString() }; state.scripts.push(added); return added;
+      });
+      await runtime.applySharedScript(result); return result;
+    });
+    res.json(script);
+  });
   app.get('/api/characters/:id/inventory', async (req, res) => res.json(await runtime.exclusive(async () => inventoryView(await runtime.inventory(req.params.id)))));
   app.post('/api/transfers/prepare', async (req, res) => res.json(await transfers.prepare(transferSchema.parse(req.body), sessionFor(req).token)));
   app.post('/api/transfers/:id/confirm', async (req, res) => {
@@ -156,9 +181,15 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     else throw new HttpError(404, 'Neznámá akce.');
     res.json({ ok: true });
   });
-  app.get('/api/scripts/:id', (req, res) => {
-    const script = store.snapshot().scripts.find(s => s.id === req.params.id);
-    if (!script) throw new HttpError(404, 'Skript neexistuje.');
+  app.get('/api/scripts/:id', async (req, res) => {
+    const script = await runtime.exclusive(async () => {
+      const existing = store.snapshot().scripts.find(s => s.id === req.params.id);
+      if (!existing) throw new HttpError(404, 'Skript neexistuje.');
+      if (!existing.remoteSlot) return existing;
+      if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+      const current = await gameApi.getCode(existing.remoteSlot);
+      return store.update(state => { const cached = state.scripts.find(s => s.id === existing.id); Object.assign(cached, current, { updatedAt: new Date().toISOString() }); return cached; });
+    });
     res.json(script);
   });
   app.post('/api/scripts', async (req, res) => {
@@ -169,12 +200,21 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     }); res.status(201).json(script);
   });
   app.put('/api/scripts/:id', async (req, res) => {
-    const input = scriptSchema.parse(req.body);
-    await store.update(state => {
-      const script = state.scripts.find(s => s.id === req.params.id);
+    const parsed = scriptSchema.extend({ expectedVersion: z.string().max(100).nullable().optional() }).parse(req.body);
+    const { expectedVersion, ...input } = parsed;
+    const saved = await runtime.exclusive(async () => {
+      const script = store.snapshot().scripts.find(s => s.id === req.params.id);
       if (!script) throw new HttpError(404, 'Skript neexistuje.');
-      Object.assign(script, input, { updatedAt: new Date().toISOString() });
-    }); res.json({ ok: true });
+      let current = input;
+      if (script.remoteSlot) {
+        if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+        if (typeof expectedVersion !== 'string') throw new HttpError(409, 'Načti aktuální verzi herního slotu před uložením.');
+        current = await gameApi.saveCode(script.remoteSlot, input, expectedVersion);
+      }
+      const result = await store.update(state => { const cached = state.scripts.find(s => s.id === script.id); Object.assign(cached, current, { updatedAt: new Date().toISOString() }); return cached; });
+      if (result.remoteSlot) await runtime.applySharedScript(result);
+      return result;
+    }); res.json(saved);
   });
   app.delete('/api/scripts/:id', async (req, res) => {
     await store.update(state => {

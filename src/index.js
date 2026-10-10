@@ -8,9 +8,9 @@ import { GameApi } from './game-api.js';
 
 const config = configFromEnv();
 const store = new Store(config.dataDir); await store.init();
-const runtime = new Runtime(config, store);
-const account = new GameAccount(config, runtime); await account.init();
 const gameApi = new GameApi(config); await gameApi.init();
+const runtime = new Runtime(config, store, undefined, gameApi);
+const account = new GameAccount(config, runtime); await account.init();
 const app = createApp(config, store, runtime, account, gameApi);
 const server = await createWebServer(config, app);
 server.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: ${config.tls.enabled ? 'https' : 'http'}://${config.host}:${config.port}`));

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { createHash } from 'node:crypto';
 
 export const GAME_ORIGIN = 'https://adventure.land';
 export async function withDeadline(operation, milliseconds = 15_000) {
@@ -18,8 +19,9 @@ export function characterUrl(character) {
 }
 
 export class Runtime {
-  constructor(config, store, browserType = chromium) {
+  constructor(config, store, browserType = chromium, gameApi = null) {
     this.config = config; this.store = store; this.browserType = browserType;
+    this.gameApi = gameApi; this.nextCodeSync = 0;
     this.browser = null; this.sessions = new Map(); this.logs = [];
     this.queue = Promise.resolve(); this.closing = false; this.sequence = 0;
     this.timer = null;
@@ -69,6 +71,11 @@ export class Runtime {
     const character = this.store.snapshot().characters.find(c => c.id === id);
     if (!character) throw new Error('Postava neexistuje.');
     if (!this.config.authCookie) throw new Error('Připoj herní účet v panelu nebo nastav AL_AUTH_COOKIE.');
+    if (character.scriptId) {
+      const script = this.store.snapshot().scripts.find(s => s.id === character.scriptId);
+      if (!script?.remoteSlot) throw Object.assign(new Error('Propoj CODE s herním slotem. Místní návrh nelze spustit.'), { status: 409 });
+      if (!this.gameApi?.status().configured) throw Object.assign(new Error('Pro společný herní CODE připoj API token.'), { status: 409 });
+    }
     if (this.sessions.has(id)) return;
     if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
     const session = { id, character, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null };
@@ -125,22 +132,73 @@ export class Runtime {
     session.status = 'running'; session.error = null; session.attempts = 0;
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
   }
-  async loadScript(session) {
+  async loadScript(session, fetched = null) {
     const character = this.store.snapshot().characters.find(c => c.id === session.id);
-    const script = this.store.snapshot().scripts.find(s => s.id === character?.scriptId);
+    let script = this.store.snapshot().scripts.find(s => s.id === character?.scriptId);
     if (character?.scriptId && !script) throw new Error('Přiřazený skript neexistuje.');
+    if (script) {
+      if (!script.remoteSlot || !this.gameApi) throw new Error('Propoj CODE s herním slotem a připoj API token.');
+      const current = fetched || await this.gameApi.getCode(script.remoteSlot);
+      if (current.remoteSlot !== script.remoteSlot) throw new Error('CODE slot nesouhlasí.');
+      await this.store.update(state => {
+        const cached = state.scripts.find(s => s.id === script.id);
+        Object.assign(cached, current, { updatedAt: new Date().toISOString() });
+      });
+      script = { ...script, ...current };
+    }
     await withDeadline(session.page.evaluate(source => {
       if (window.code_run) window.stop_runner();
       if (source) window.start_runner('maincode', source);
     }, script?.source || ''));
     if (script?.source) await session.page.waitForFunction(() => window.code_active === true, null, { timeout: 15_000 });
+    session.codeHash = script ? createHash('sha256').update(script.source).digest('hex') : null;
+    session.code = script ? { slot: script.remoteSlot, version: script.remoteVersion, syncedAt: new Date().toISOString(), error: null } : null;
     this.log(session.id, 'info', script ? `CODE: ${script.name}` : 'Postava připojena bez CODE.');
   }
   reload(id) { return this.exclusive(async () => {
     const session = this.sessions.get(id);
     if (!session || session.status !== 'running') throw new Error('Postava není připojena.');
-    await this.loadScript(session);
+    try { await this.loadScript(session); }
+    catch (error) { await this.pauseCode(session, error); throw error; }
   }); }
+  async pauseCode(session, error) {
+    const message = 'Synchronizace CODE selhala; běh pozastaven: ' + this.redact(error.message);
+    // If the runner cannot be stopped, close its game context instead of leaving stale CODE running.
+    try { await withDeadline(session.page.evaluate(() => { if (window.code_run) window.stop_runner(); }), 5000); }
+    catch { await withDeadline(session.context?.close() || Promise.resolve(), 5000).catch(() => {}); this.failed(session, new Error(message)); }
+    session.codeHash = null;
+    if (session.code?.error !== message) this.log(session.id, 'error', message);
+    session.code = { ...session.code, error: message };
+  }
+  async applySharedScript(script) {
+    const hash = createHash('sha256').update(script.source).digest('hex');
+    for (const session of this.sessions.values()) {
+      const character = this.store.snapshot().characters.find(c => c.id === session.id);
+      if (session.status !== 'running' || character?.scriptId !== script.id) continue;
+      try {
+        if (session.codeHash !== hash || session.code?.error) await this.loadScript(session, script);
+        else session.code = { slot: script.remoteSlot, version: script.remoteVersion, syncedAt: new Date().toISOString(), error: null };
+      } catch (error) { await this.pauseCode(session, error); }
+    }
+  }
+  async syncSharedScripts() {
+    if (Date.now() < this.nextCodeSync) return;
+    this.nextCodeSync = Date.now() + 30_000;
+    const ids = new Set([...this.sessions.values()].filter(s => s.status === 'running').map(s => this.store.snapshot().characters.find(c => c.id === s.id)?.scriptId).filter(Boolean));
+    for (const id of ids) {
+      const script = this.store.snapshot().scripts.find(s => s.id === id);
+      try {
+        if (!script?.remoteSlot || !this.gameApi) throw new Error('Chybí propojený CODE slot nebo API token.');
+        const current = await this.gameApi.getCode(script.remoteSlot);
+        if (current.source !== script.source || current.remoteVersion !== script.remoteVersion || current.name !== script.name) {
+          await this.store.update(state => Object.assign(state.scripts.find(s => s.id === id), current, { updatedAt: new Date().toISOString() }));
+        }
+        await this.applySharedScript({ ...script, ...current });
+      } catch (error) {
+        for (const session of this.sessions.values()) if (session.status === 'running' && this.store.snapshot().characters.find(c => c.id === session.id)?.scriptId === id) await this.pauseCode(session, error);
+      }
+    }
+  }
   async inventory(id) {
     const session = this.sessions.get(id);
     if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
@@ -197,6 +255,7 @@ export class Runtime {
   }
   async tick() {
     if (this.closing) return;
+    await this.syncSharedScripts();
     for (const session of this.sessions.values()) {
       if (session.status === 'reconnecting') {
         if (Date.now() < session.nextRetry) continue;
@@ -223,7 +282,7 @@ export class Runtime {
     this.log(id, 'info', 'Postava odpojena.');
   }
   snapshot() {
-    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt }) => ({ id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt }));
+    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt, code }) => ({ id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, code }));
   }
   async close() {
     this.closing = true; clearInterval(this.timer);

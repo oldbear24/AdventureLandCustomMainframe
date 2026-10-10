@@ -29,14 +29,14 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 ## Co umí
 
 - Správa až 4 postav: region, server, přiřazený skript, start, stop, opětovné načtení CODE.
-- Editor lokálních skriptů; uložením se běžící CODE nepřepisuje. Nasadíš ho přes **↻ CODE**.
+- Společné uložené CODE sloty s prohlížečem: automatické načítání změn přibližně každých 30 sekund a ukládání z panelu do stejného herního slotu. Místní skripty slouží jako návrhy.
 - Stav postav, HP/MP, level, mapa, gold, stav CODE a živé herní/CODE logy.
 - Kontrola vlastnictví a online stavu před připojením. Automatické opakování při výpadku s prodlevou 10 sekund až 5 minut.
 - Volitelný autostart uložených postav po restartu. Tlačítko Stop autostart dané postavy vypne.
 - Přihlášení do panelu jménem a heslem; HttpOnly session cookie, omezení pokusů o přihlášení, kontrola Origin a validace vstupů.
 - Přihlášení k Adventure Land e-mailem a heslem přímo z panelu; pro Steam účet také vložení herní cookie. Herní relace se ukládá šifrovaně, herní heslo se neukládá.
 - Přímé HTTPS s vlastním PEM certifikátem a klíčem, nebo provoz za HTTPS proxy.
-- Volitelný API token „Connect an AI“: výpis postav účtu a přidání vybrané postavy do panelu.
+- API token „Connect an AI“: výpis postav účtu, import postav a synchronizace CODE slotů. Pro spouštění přiřazeného CODE je token potřebný.
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 1 000 záznamů).
 
@@ -140,24 +140,37 @@ Pokud proxy běží v jiném kontejneru, její `127.0.0.1` není hostitel: přip
 
 ## První postava
 
-1. Připoj herní účet přes **Připojit účet**. Pak v CODE editoru vlož svůj funkční Adventure Land skript, pojmenuj ho a ulož.
-2. Přidej postavu přesným jménem. Nastav region, aktuální jméno serveru z výběru ve hře (například `EU` + `I`) a skript.
-3. Pokud chceš obnovu po restartu serveru, zapni autostart. Přidání postavu okamžitě nespouští.
-4. Odpoj ji z původního prohlížeče / herního Mainframu a stiskni **Start**.
-5. Sleduj skutečný stav připojení na kartě a logy. Při nesprávné cookie, chybě serveru nebo výpadku uvidíš důvod a runtime pokus zopakuje.
-6. Úpravu CODE ulož a nasaď přes **↻ CODE**. Konfiguraci postavy měň po zastavení.
+1. V prohlížeči Adventure Land ulož svůj CODE do herního slotu. V panelu připoj herní účet přes **Připojit účet** a API token **Connect an AI / MCP**.
+2. V CODE editoru klikni na **Načíst herní sloty**, vyber stejný slot a zvol **Načíst a propojit slot**.
+3. Přidej postavu přesným jménem. Nastav region, aktuální jméno serveru z výběru ve hře (například `EU` + `I`) a skript.
+4. Pokud chceš obnovu po restartu serveru, zapni autostart. Přidání postavu okamžitě nespouští.
+5. Odpoj ji z původního prohlížeče / herního Mainframu a stiskni **Start**.
+6. Sleduj skutečný stav připojení na kartě a logy. Při nesprávné cookie, chybě serveru nebo výpadku uvidíš důvod a runtime pokus zopakuje.
+7. Uložená změna slotu z prohlížeče se načte automaticky. Uložení propojeného skriptu v panelu zapíše herní slot a rovnou aktualizuje místní běh. **↻ CODE** vynutí nové načtení. Konfiguraci postavy měň po zastavení.
 
 Bez přiřazeného skriptu se postava připojí a zůstane bez aktivního CODE. Projekt automaticky nevybírá strategii farmení.
 
 **Odhlásit se** odhlásí pouze panel; postavy dál běží. **Odpojit účet a zastavit postavy** v dialogu herního účtu zastaví místní postavy, vypne jejich autostart a odstraní místní herní relaci. Nemění heslo ani neodhlašuje jiné herní klienty. Před změnou herního účtu zastav aktivní postavy.
 
+## Společný CODE s prohlížečem
+
+Zdrojem CODE je uložený slot tvého herního účtu. Panel uchovává jeho místní kopii, ale při startu, obnově spojení a **↻ CODE** čte aktuální obsah ze hry. Běžící postavy kontrolují své sloty za normálního spojení přibližně každých 30 sekund. Změna zdrojového kódu restartuje CODE všech místních postav přiřazených ke stejnému slotu; nezměněný zdroj se zbytečně nerestartuje.
+
+**Načíst a propojit slot** převezme herní obsah do editoru bez zápisu do hry. **Uložit herní slot** naopak zapíše změny do stejného slotu a hned je předá místním běžícím postavám. Editor kontroluje verzi před uložením: pokud byl slot mezitím změněn, žádá nové načtení a sloučení změn. Herní API neposkytuje atomickou podmínku verze pro zápis, proto se vyhni současnému ukládání ze dvou editorů.
+
+V prohlížeči používej a spouštěj tentýž slot. Rozepsané, neuložené změny v prohlížeči nejsou přes API dostupné. Po uložení z panelu si v prohlížeči slot znovu načti a spusť; panel automaticky nepřepisuje CODE běžící v jiném klientu. Jednu postavu připojuj vždy jen v jednom klientu.
+
+Při výpadku API nebo odstranění slotu runtime při další kontrole pozastaví CODE a zobrazí chybu. Pokud runner nejde zastavit, uzavře herní spojení. Po obnově API se načte aktuální herní obsah a běh pokračuje. Starší místní kopie se při výpadku nespouští.
+
+Původní místní skripty zůstávají jako návrhy; před dalším spuštěním je propoj s herním slotem. Zastav postavu, vyber její stávající skript v editoru a načti do něj odpovídající herní slot. Přiřazení postavy se zachová, obsah návrhu se nahradí obsahem hry. **Odpojit slot z panelu** odstraní jen místní záznam; uložený CODE ve hře zůstává. Přiřazený skript nejdřív odeber z konfigurace postav.
+
 ## API token a seznam postav
 
 V Adventure Land otevři Mainframe → **Connect an AI** → vytvoř nebo zobraz token. V našem panelu otevři **Herní účet** → **API token — Connect an AI / MCP** a vlož ho tam. Token neposílej do chatu ani do veřejného repozitáře. Při připojení ho server ověří přes oficiální JSON API a načte seznam postav. Tlačítko **Načíst seznam** obnovuje seznam ručně; nepoužívá rychlé opakované dotazování API.
 
-U postavy zvol **Přidat do panelu**, nastav region, server a svůj skript. Načtení seznamu samo žádnou postavu nespouští. Token a herní přihlášení jsou nezávislé: token slouží pro výpis, herní relace pro vlastní běh postav. Vlastnictví se před spuštěním ověřuje také vůči herní relaci, takže token jiného účtu nedovolí spustit jeho postavu přes tuto relaci.
+U postavy zvol **Přidat do panelu**, nastav region, server a svůj skript. Načtení seznamu samo žádnou postavu nespouští. Token a herní přihlášení jsou nezávislé: token slouží pro výpis a společné CODE sloty, herní relace pro vlastní běh postav. Používej obojí ze stejného herního účtu. Vlastnictví se před spuštěním ověřuje také vůči herní relaci, takže token jiného účtu nedovolí spustit jeho postavu přes tuto relaci.
 
-API token se ukládá šifrovaně do `api-token.enc.json` s klíčem `api-token.key` (práva 600). V API odpovědích, frontendovém stavu ani logu není jeho hodnota; panel ho po odeslání smaže z formuláře. Pro zálohu obnovuj oba soubory společně. **Odpojit API token** odstraní místní token, ale nezastavuje postavy ani neodvolává token ve hře. Odvolání proveď v Adventure Land. Používá se pouze `mainframe_list_characters` na `https://adventure.land/mcp_api/`; integrace nevolá placené spuštění oficiálního Mainframu.
+API token se ukládá šifrovaně do `api-token.enc.json` s klíčem `api-token.key` (práva 600). V API odpovědích, frontendovém stavu ani logu není jeho hodnota; panel ho po odeslání smaže z formuláře. Pro zálohu obnovuj oba soubory společně. **Odpojit API token** odstraní místní token a při další kontrole pozastaví propojený CODE; postavy mohou zůstat připojené. Token ve hře neodvolává. Odvolání proveď v Adventure Land. Používají se pouze `mainframe_list_characters`, `list_codes`, `get_code` a `save_code` na `https://adventure.land/mcp_api/`; integrace nevolá placené spuštění oficiálního Mainframu.
 
 ## Posílání zlata a předmětů
 
@@ -207,7 +220,7 @@ Na Linuxu mimo Docker může být potřeba `npx playwright install --with-deps c
 
 ## Ověření a hranice
 
-Testy ověřují přihlášení do panelu i herního účtu, šifrování relace a API tokenu, seznam a import postav, náhledy převodů, ochranu proti opakovanému odeslání, změnu inventáře, přístup k API, skutečné HTTPS s testovacím certifikátem, Secure cookie, kontrolu jména certifikátu, ukládání, lifecycle runtime a obnovu po výpadku. Samostatný `npm run test:browser` ověřuje panel i browser bridge v reálném Chromium s lokální napodobeninou herního klientu včetně převodu zlata a předmětů. GitHub Actions také ověřuje HTTP i HTTPS přímo v sestaveném Docker image. Bez tvých herních přihlašovacích údajů nebylo ověřeno živé přihlášení, API token ani skutečný herní převod.
+Testy ověřují přihlášení do panelu i herního účtu, šifrování relace a API tokenu, seznam a import postav, import a ukládání společných CODE slotů, synchronizaci více runnerů, odmítnutí staré verze editoru, pozastavení CODE při výpadku API i obnovu z aktuálního slotu, náhledy převodů, ochranu proti opakovanému odeslání, změnu inventáře, přístup k API, skutečné HTTPS s testovacím certifikátem, Secure cookie, kontrolu jména certifikátu, ukládání, lifecycle runtime a obnovu po výpadku. Samostatný `npm run test:browser` ověřuje panel i browser bridge v reálném Chromium s lokální napodobeninou herního klientu včetně synchronizace CODE a převodu zlata a předmětů. GitHub Actions také ověřuje HTTP i HTTPS přímo v sestaveném Docker image. Bez tvých herních přihlašovacích údajů nebylo ověřeno živé přihlášení, API token ani skutečný herní převod.
 
 Runtime načítá aktuální klient ze hry, takže změna jejích přihlašovacích nebo CODE funkcí může vyžadovat úpravu adaptéru `src/runtime.js`. Kontrola online stavu omezuje duplicitní spuštění, ale souběžné přihlášení z jiného klientu mezi kontrolou a připojením není možné z tohoto panelu atomicky zablokovat. Jedno Chromium sdílí proces browseru; postavy mají oddělené contexty, nikoli samostatné kontejnery. Logy se nedrží po restartu a nejde o systém pro provoz více nezávislých zákaznických účtů.
 

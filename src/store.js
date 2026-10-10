@@ -17,10 +17,15 @@ export const scriptSchema = z.object({
     try { new Script(source); return true; } catch { return false; }
   }, 'CODE obsahuje chybu syntaxe. Použij běžný JavaScript bez import/export.'),
 }).strict();
+export const savedScriptSchema = scriptSchema.extend({
+  id: z.string().uuid(), updatedAt: z.string(),
+  remoteSlot: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().default(null),
+  remoteVersion: z.string().max(100).nullable().default(null),
+});
 const stateSchema = z.object({
   version: z.literal(1),
   characters: z.array(characterSchema.extend({ id: z.string().uuid() })),
-  scripts: z.array(scriptSchema.extend({ id: z.string().uuid(), updatedAt: z.string() })),
+  scripts: z.array(savedScriptSchema),
 });
 
 export class Store {

@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let dashboard = null, selectedScript = '', dirty = false, polling = false, active = false;
 const pending = new Set();
+let selectedRemoteVersion = null, selectedRemoteSlot = null;
 let ownedCharacters = [], transferInventory = null, transferCharacterId = '', transferQuote = null;
 function clearCredentials() { for (const id of ['game-password', 'game-cookie', 'api-token']) $(id).value = ''; }
 const number = value => new Intl.NumberFormat('cs-CZ').format(Math.round(Number(value) || 0));
@@ -16,7 +17,7 @@ async function api(url, method = 'GET', body) {
 }
 let toastTimer;
 function toast(message, error = false) { $('toast').textContent = message; $('toast').className = error ? 'error' : ''; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6500); }
-function scriptOptions(selected = '', empty = 'Bez CODE') { return `<option value="">${empty}</option>${dashboard.scripts.map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${escape(s.name)}</option>`).join('')}`; }
+function scriptOptions(selected = '', empty = 'Bez CODE', linkedOnly = false) { return `<option value="">${empty}</option>${dashboard.scripts.filter(s => !linkedOnly || s.remoteSlot).map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${escape(s.name)}${s.remoteSlot ? '' : ' · návrh'}</option>`).join('')}`; }
 function render() {
   const sessions = new Map(dashboard.sessions.map(s => [s.id, s]));
   const running = dashboard.sessions.filter(s => s.status === 'running');
@@ -37,13 +38,14 @@ function render() {
   $('api-status').textContent = dashboard.gameApi?.configured ? 'API token je připojen. Seznam načti tlačítkem.' : 'Připoj API token v dialogu Herní účet.';
   $('load-owned').disabled = !dashboard.gameApi?.configured;
   $('disconnect-token').hidden = !dashboard.gameApi?.configured;
+  $('load-code-slots').disabled = !dashboard.gameApi?.configured;
   $('add-character').disabled = dashboard.characters.length >= dashboard.config.maxCharacters;
   $('characters').innerHTML = dashboard.characters.length ? dashboard.characters.map(c => {
     const session = sessions.get(c.id), state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
     const labels = { running: state?.rip ? 'DEAD' : 'ONLINE', starting: 'STARTUJI', reconnecting: 'OBNOVUJI', stopped: 'OFFLINE' };
     const percentage = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
     const script = dashboard.scripts.find(s => s.id === c.scriptId);
-    return `<article class="character-card"><div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} / ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}</small></div></div><span class="badge ${status}">${labels[status]}</span></div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div><div class="details"><span>${state ? escape(state.map) : 'Čeká na spuštění'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div><div class="card-script">⌘ ${script ? escape(script.name) : 'Bez skriptu'} ${state ? (state.codeRunning ? ' · CODE běží' : ' · CODE stojí') : ''}${c.autoStart ? ' · autostart' : ''}</div>${session?.error ? `<p class="card-error">${escape(session.error)}</p>` : ''}<div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''}>↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Upravit</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div></article>`;
+    return `<article class="character-card"><div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} / ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}</small></div></div><span class="badge ${status}">${labels[status]}</span></div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div><div class="details"><span>${state ? escape(state.map) : 'Čeká na spuštění'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div><div class="card-script">⌘ ${script ? escape(script.name) : 'Bez skriptu'} ${state ? (state.codeRunning ? ' · CODE běží' : ' · CODE stojí') : ''}${c.autoStart ? ' · autostart' : ''}</div>${session?.error || session?.code?.error ? `<p class="card-error">${escape(session.error || session.code.error)}</p>` : ''}<div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''}>↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Upravit</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div></article>`;
   }).join('') : '<div class="empty"><h2>Tvůj tým začíná tady.</h2><p>Přidej postavu, přiřaď CODE a spusť první relaci.</p></div>';
   $('script-picker').innerHTML = scriptOptions(selectedScript, 'Nový skript');
   const filter = $('log-filter').value;
@@ -71,7 +73,7 @@ $('login-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
-  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; dirty = false; }
+  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; }
   catch (error) { toast(error.message, true); }
 });
 function openAccount() {
@@ -100,7 +102,7 @@ $('disconnect-account').addEventListener('click', async () => {
 function openCharacter(character) {
   $('character-form').reset(); $('character-id').value = character?.id || ''; $('dialog-title').textContent = character ? 'Upravit postavu' : 'Přidat postavu';
   $('character-name').value = character?.name || ''; $('character-region').value = character?.region || 'EU'; $('character-server').value = character?.server || 'I'; $('character-autostart').checked = character?.autoStart || false;
-  $('character-script').innerHTML = scriptOptions(character?.scriptId || ''); $('character-dialog').showModal();
+  $('character-script').innerHTML = scriptOptions(character?.scriptId || '', 'Bez CODE', true); $('character-dialog').showModal();
 }
 $('add-character').addEventListener('click', () => openCharacter()); $('close-dialog').addEventListener('click', () => $('character-dialog').close());
 $('character-form').addEventListener('submit', async event => {
@@ -124,31 +126,62 @@ $('characters').addEventListener('click', async event => {
   finally { pending.delete(id); await refresh(); }
 });
 function newScript() {
-  selectedScript = ''; $('script-picker').value = ''; $('script-name').value = ''; $('script-source').value = '// Adventure Land CODE\n// Vlož vlastní skript a přiřaď ho postavě.\n'; $('delete-script').hidden = true; dirty = false; $('editor-note').textContent = 'Uložení nemění běžící CODE.';
+  selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; $('save-script').textContent = 'Uložit návrh'; $('script-picker').value = ''; $('script-name').value = ''; $('script-source').value = '// Adventure Land CODE\n// Vlož vlastní skript a přiřaď ho postavě.\n'; $('delete-script').hidden = true; dirty = false; $('editor-note').textContent = 'Místní návrh. Pro běh ho propoj s herním slotem.';
 }
+function setEditor(script) {
+  selectedScript = script.id; selectedRemoteVersion = script.remoteVersion || null; selectedRemoteSlot = script.remoteSlot || null;
+  $('script-name').value = script.name; $('script-source').value = script.source; $('script-picker').value = script.id;
+  $('delete-script').hidden = false; dirty = false;
+  $('save-script').textContent = selectedRemoteSlot ? 'Uložit herní slot' : 'Uložit návrh';
+  $('delete-script').textContent = selectedRemoteSlot ? 'Odpojit slot z panelu' : 'Smazat návrh';
+  $('editor-note').textContent = selectedRemoteSlot ? `Herní slot ${selectedRemoteSlot} · verze ${selectedRemoteVersion}. Uložení aktualizuje běžící CODE.` : 'Místní návrh. Pro běh ho propoj s herním slotem.';
+}
+$('load-code-slots').addEventListener('click', async () => {
+  $('load-code-slots').disabled = true;
+  try {
+    const { slots } = await api('/code-slots');
+    $('code-slot-picker').innerHTML = slots.map(slot => `<option value="${escape(slot.slot)}">${escape(slot.slot)} · ${escape(slot.name)}</option>`).join('');
+    if (selectedRemoteSlot && slots.some(slot => slot.slot === selectedRemoteSlot)) $('code-slot-picker').value = selectedRemoteSlot;
+    $('import-code-slot').disabled = slots.length === 0;
+    if (!slots.length) toast('Ve hře nejdřív ulož CODE do slotu.', true);
+  } catch (error) { toast(error.message, true); }
+  finally { $('load-code-slots').disabled = !dashboard.gameApi?.configured; }
+});
+$('import-code-slot').addEventListener('click', async () => {
+  const slot = $('code-slot-picker').value;
+  if (!slot) return;
+  if ((dirty || (selectedScript && !selectedRemoteSlot && $('script-source').value)) && !confirm('Načíst obsah herního slotu místo návrhu v editoru?')) return;
+  $('import-code-slot').disabled = true; document.querySelector('.editor-panel').inert = true;
+  try {
+    const script = await api(`/code-slots/${encodeURIComponent(slot)}/import`, 'POST', { scriptId: selectedScript || null });
+    setEditor(script); await refresh(); toast('Společný herní slot propojen.');
+  } catch (error) { toast(error.message, true); }
+  finally { $('import-code-slot').disabled = false; document.querySelector('.editor-panel').inert = false; }
+});
 $('new-script').addEventListener('click', () => { if (!dirty || confirm('Zahodit neuložené změny?')) newScript(); });
 $('script-picker').addEventListener('change', async () => {
   const id = $('script-picker').value;
   if (dirty && !confirm('Zahodit neuložené změny?')) { $('script-picker').value = selectedScript; return; }
   if (!id) return newScript();
-  try { const script = await api(`/scripts/${id}`); selectedScript = id; $('script-name').value = script.name; $('script-source').value = script.source; $('delete-script').hidden = false; dirty = false; $('editor-note').textContent = 'Uložení nemění běžící CODE.'; }
+  document.querySelector('.editor-panel').inert = true;
+  try { setEditor(await api(`/scripts/${id}`)); }
   catch (error) { $('script-picker').value = selectedScript; toast(error.message, true); }
+  finally { document.querySelector('.editor-panel').inert = false; }
 });
 for (const id of ['script-name', 'script-source']) $(id).addEventListener('input', () => { dirty = true; $('editor-note').textContent = 'Neuložené změny'; });
 $('script-source').addEventListener('keydown', event => {
   if (event.key === 'Tab') { event.preventDefault(); const field = event.target; field.setRangeText('  ', field.selectionStart, field.selectionEnd, 'end'); field.dispatchEvent(new Event('input')); }
 });
 $('save-script').addEventListener('click', async () => {
-  $('save-script').disabled = true;
+  $('save-script').disabled = true; document.querySelector('.editor-panel').inert = true;
   try {
-    const script = await api(`/scripts${selectedScript ? `/${selectedScript}` : ''}`, selectedScript ? 'PUT' : 'POST', { name: $('script-name').value, source: $('script-source').value });
-    if (!selectedScript) selectedScript = script.id;
-    dirty = false; $('delete-script').hidden = false; $('editor-note').textContent = 'Uloženo. Pro nasazení použij ↻ CODE.'; toast('Skript uložen.'); await refresh();
+    const script = await api(`/scripts${selectedScript ? `/${selectedScript}` : ''}`, selectedScript ? 'PUT' : 'POST', { name: $('script-name').value, source: $('script-source').value, ...(selectedScript ? { expectedVersion: selectedRemoteVersion } : {}) });
+    setEditor(script); $('editor-note').textContent = script.remoteSlot ? `Uloženo do herního slotu ${script.remoteSlot}. Běh postav se synchronizuje.` : 'Uloženo jako návrh. Pro běh načti společný herní slot.'; toast(script.remoteSlot ? 'Herní slot uložen. Běh postav se synchronizuje.' : 'Návrh uložen.'); await refresh();
   } catch (error) { toast(error.message, true); }
-  finally { $('save-script').disabled = false; }
+  finally { $('save-script').disabled = false; document.querySelector('.editor-panel').inert = false; }
 });
 $('delete-script').addEventListener('click', async () => {
-  if (!selectedScript || !confirm('Smazat tento skript?')) return;
+  if (!selectedScript || !confirm(selectedRemoteSlot ? 'Odpojit tento slot z panelu? Herní CODE zůstane uložený.' : 'Smazat tento návrh?')) return;
   try { await api(`/scripts/${selectedScript}`, 'DELETE', {}); newScript(); await refresh(); } catch (error) { toast(error.message, true); }
 });
 $('log-filter').addEventListener('change', renderLogs);

@@ -49,11 +49,22 @@ const account = new GameAccount(config, runtime, async (url, options) => {
   if (JSON.parse(options.body).password !== 'fixture-game-password') return new Response(JSON.stringify({ failed: true, reason: 'wrong_password' }), { status: 401 });
   return new Response(JSON.stringify({ success: true, user: 'fixture-user', auth: 'fixture-auth-secret' }), { status: 200 });
 }); await account.init();
+let cloudCode = { slot: '1', name: 'Fixture warrior', version: 1, code: 'game_log("fixture CODE ready"); console.log("browser bridge verified");' };
+let apiAvailable = true;
 const gameApi = new GameApi(config, async (url, options) => {
-  assert.equal(url, `${GAME_ORIGIN}/mcp_api/mainframe_list_characters`);
-  assert.equal(JSON.parse(options.body).token, `mcp_${'a'.repeat(43)}`);
-  return Response.json({ success: true, characters: [{ character: 'TestWarrior', level: 42, class: 'warrior', profile: { online: false } }] });
+  const input = JSON.parse(options.body);
+  assert.equal(input.token, `mcp_${'a'.repeat(43)}`);
+  if (!apiAvailable) throw new Error('Fixture API offline');
+  const method = url.slice(url.lastIndexOf('/') + 1);
+  assert.ok(url.startsWith(`${GAME_ORIGIN}/mcp_api/`));
+  if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'TestWarrior', level: 42, class: 'warrior', profile: { online: false } }] });
+  if (method === 'list_codes') return Response.json({ success: true, codes: [{ slot: cloudCode.slot, name: cloudCode.name, version: cloudCode.version }] });
+  assert.equal(input.slot, '1');
+  if (method === 'get_code') return Response.json({ success: true, code: { ...cloudCode } });
+  if (method === 'save_code') { cloudCode = { ...cloudCode, name: input.name, code: input.code, version: cloudCode.version + 1 }; return Response.json({ success: true, code: { slot: '1', name: cloudCode.name, version: cloudCode.version } }); }
+  throw new Error(`Unexpected API method ${method}`);
 }); await gameApi.init();
+runtime.gameApi = gameApi;
 const app = createApp(config, store, runtime, account, gameApi);
 const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `http://127.0.0.1:${server.address().port}`;
@@ -89,9 +100,8 @@ try {
   await page.locator('#account-dialog').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#api-token').inputValue(), '');
   assert.match(await page.locator('#owned-characters').textContent(), /TestWarrior/);
-  await page.locator('#script-name').fill('Fixture warrior');
-  await page.locator('#script-source').fill('game_log("fixture CODE ready"); console.log("browser bridge verified");');
-  await page.locator('#save-script').click();
+  await page.locator('#load-code-slots').click();
+  await page.locator('#import-code-slot').click();
   await page.waitForFunction(() => document.querySelector('#script-picker').options.length === 2);
   await page.locator('[data-owned-index="0"]').click();
   assert.equal(await page.locator('#character-name').inputValue(), 'TestWarrior');
@@ -109,6 +119,7 @@ try {
   await page.locator('#load-owned').click();
   await page.waitForFunction(() => document.querySelector('[data-owned-index]'));
   const gamePage = runtime.sessions.values().next().value.page;
+  assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   await page.locator('[data-action=transfer]').click();
   await page.locator('#transfer-to').fill('Receiver'); await page.locator('#transfer-amount').fill('200');
   await page.locator('#transfer-form button').click(); await page.locator('#transfer-review').waitFor({ state: 'visible' });
@@ -134,14 +145,25 @@ try {
   await page.waitForFunction(() => document.getElementById('transfer-result').textContent.includes('Inventář se změnil'));
   assert.equal(await gamePage.evaluate(() => window.sentTransfers.length), 2);
   await page.locator('#close-transfer').click();
+  // An edit saved in the game's browser slot becomes the source for the local runner.
+  cloudCode = { ...cloudCode, code: 'game_log("saved in game browser");', version: cloudCode.version + 1 };
+  runtime.nextCodeSync = 0; await runtime.exclusive(() => runtime.tick());
+  assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
+  apiAvailable = false; runtime.nextCodeSync = 0; await runtime.exclusive(() => runtime.tick());
+  assert.equal(await gamePage.evaluate(() => window.code_active), false);
+  assert.match(runtime.snapshot()[0].code.error, /pozastaven/);
+  apiAvailable = true; runtime.nextCodeSync = 0; await runtime.exclusive(() => runtime.tick());
+  assert.equal(await gamePage.evaluate(() => window.code_active), true);
+  assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   assert.equal(await page.locator('.meter i').first().evaluate(element => Math.round(element.getBoundingClientRect().width / element.parentElement.getBoundingClientRect().width * 100)), 80);
   const scriptId = store.snapshot().scripts[0].id;
   await page.locator('#script-picker').selectOption(scriptId);
-  await page.waitForFunction(() => document.querySelector('#script-source').value.includes('fixture CODE ready'));
+  await page.waitForFunction(() => document.querySelector('#script-source').value.includes('saved in game browser'));
   await page.locator('#script-source').fill('game_log("reloaded fixture");');
   await page.locator('#save-script').click();
   await page.waitForFunction(() => document.querySelector('#editor-note').textContent.startsWith('Uloženo'));
-  assert.equal(runtime.logs.some(l => l.message.includes('reloaded fixture')), false);
+  assert.equal(cloudCode.code, 'game_log("reloaded fixture");');
+  assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   await page.locator('[data-action=reload]').click();
   await page.waitForFunction(() => document.querySelector('[data-action=reload]').disabled === false);
   assert.ok(runtime.logs.some(l => l.message.includes('reloaded fixture')));
@@ -181,7 +203,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, encrypted API token, owned character import, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));
