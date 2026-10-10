@@ -1,7 +1,7 @@
 // Live map page, drawn on a canvas.
 // The static layer (floor, walls, zones, doors, NPCs) is rendered into an offscreen canvas larger than the view
-// and reused while the camera moves within it; characters and nearby entities are drawn over it each frame and
-// glide between live updates.
+// and reused while the camera moves within it; characters and nearby entities are drawn over it each frame,
+// replayed from their timestamped positions.
 // Nothing is drawn while nothing changes, and the DOM around the map is only touched when its text changes.
 import { $, api, app, boot, characterName, classColors, ensureOwned, escape, mapList, number, on, runningSessions } from './core.js';
 
@@ -66,45 +66,67 @@ function zoom(factor, screenX = width / 2, screenY = height / 2) {
   camera.scale = scale; requestDraw();
 }
 
-// Markers glide from their drawn position to each new reported one.
-const GLIDE = 230, JUMP = 400;
+// Movement is replayed from timestamped samples. The game page samples positions every 250 ms and the server
+// sends them in 200 ms batches, so they arrive unevenly; drawing each marker where it was DELAY ms ago,
+// interpolated between the samples around that moment, keeps the pace of the game without stops or jumps.
+const DELAY = 500, JUMP = 400, STEP = 250;
+// key -> { samples: [{ t, x, y }], x, y, entity?, gone? }; entities are keyed by their game id, so the same
+// monster reported by several characters stays one marker.
 const markers = new Map();
-let markerSerial = 0;
-function track(key, x, y, now) {
-  const marker = markers.get(key);
-  if (!marker) { markers.set(key, { x, y, fromX: x, fromY: y, toX: x, toY: y, start: 0, seen: now }); return key; }
-  if (marker.toX !== x || marker.toY !== y) {
-    const jump = Math.hypot(x - marker.x, y - marker.y) > JUMP;
-    Object.assign(marker, { fromX: jump ? x : marker.x, fromY: jump ? y : marker.y, toX: x, toY: y, start: now });
-  }
-  marker.seen = now; return key;
+// Server clock minus this browser's, from the fastest recent delivery; it makes clock skew irrelevant.
+let clockOffset = null, clockSamples = [], replayAt = 0;
+const lastSampled = new Map();
+function noteSample(sessionId, at) {
+  if (lastSampled.get(sessionId) === at) return;
+  lastSampled.set(sessionId, at);
+  const now = Date.now();
+  clockSamples = clockSamples.filter(([when]) => now - when < 10_000);
+  clockSamples.push([now, now - at]);
+  clockOffset = Math.min(...clockSamples.map(([, offset]) => offset));
 }
-// Nearby entities carry no id: each is matched to the closest marker of the same kind and name.
-function trackNearby(entities, now) {
-  const free = new Map();
-  for (const [key, marker] of markers) if (key.startsWith('e:') && marker.seen !== now) {
-    const group = key.slice(0, key.lastIndexOf(':'));
-    free.set(group, [...(free.get(group) || []), [key, marker]]);
-  }
-  return entities.map(entity => {
-    const group = `e:${entity.kind}:${entity.name}`, candidates = free.get(group) || [];
-    let best = -1, bestDistance = 150;
-    candidates.forEach(([, marker], index) => { const d = Math.hypot(marker.toX - entity.x, marker.toY - entity.y); if (d < bestDistance) { best = index; bestDistance = d; } });
-    const key = best >= 0 ? candidates.splice(best, 1)[0][0] : `${group}:${++markerSerial}`;
-    return { ...entity, key: track(key, entity.x, entity.y, now) };
-  });
+// The replayed moment in server time; it never runs backwards.
+function replayTime() {
+  if (clockOffset === null) return 0;
+  replayAt = Math.max(replayAt, Date.now() - clockOffset - DELAY);
+  return replayAt;
 }
-function glide(now) {
+function addSample(key, t, x, y) {
+  let marker = markers.get(key);
+  if (!marker) { marker = { samples: [], x, y }; markers.set(key, marker); }
+  marker.gone = false;
+  const samples = marker.samples, last = samples.at(-1);
+  if (last && t <= last.t) {
+    // An older report (e.g. from another character) is slotted in place; a known moment is skipped.
+    if (samples.some(sample => sample.t === t)) return marker;
+    samples.splice(samples.findIndex(sample => sample.t > t), 0, { t, x, y });
+    return marker;
+  }
+  if (last && Math.hypot(x - last.x, y - last.y) > JUMP) samples.push({ t: t - 1, x: last.x, y: last.y });
+  // Nothing is sent while nothing changes, so after a pause the marker stood still until shortly before.
+  else if (last && t - last.t > STEP * 2.5) samples.push({ t: t - STEP, x: last.x, y: last.y });
+  samples.push({ t, x, y });
+  const keepFrom = replayTime() - 2000;
+  while (samples.length > 2 && samples[1].t < keepFrom) samples.shift();
+  return marker;
+}
+// Moves each marker to the replayed moment; true while some marker still has a sample ahead of it.
+function replay() {
+  const at = replayTime();
   let moving = false;
-  for (const marker of markers.values()) {
-    const t = marker.start ? Math.min(1, Math.max(0, (now - marker.start) / GLIDE)) : 1;
-    marker.x = marker.fromX + (marker.toX - marker.fromX) * t; marker.y = marker.fromY + (marker.toY - marker.fromY) * t;
-    if (t < 1) moving = true;
+  for (const [key, marker] of markers) {
+    const samples = marker.samples, last = samples.at(-1);
+    if (marker.gone && at >= last.t) { markers.delete(key); continue; }
+    if (at < last.t) moving = true;
+    if (at <= samples[0].t) { marker.x = samples[0].x; marker.y = samples[0].y; continue; }
+    if (at >= last.t) { marker.x = last.x; marker.y = last.y; continue; }
+    const i = samples.findIndex(sample => sample.t > at);
+    const a = samples[i - 1], b = samples[i], f = (at - a.t) / (b.t - a.t);
+    marker.x = a.x + (b.x - a.x) * f; marker.y = a.y + (b.y - a.y) * f;
   }
   return moving;
 }
 
-// Rebuilds the scene from the dashboard; runs on live updates, not per frame.
+// Feeds the latest states into the markers; runs on live updates, not per frame.
 function sync() {
   if (!app.dashboard) return;
   const name = currentMapName();
@@ -117,22 +139,30 @@ function sync() {
     scheduleSide(); requestDraw(); return;
   }
   if (view.current !== name) { view.current = name; markers.clear(); fit(map); if (view.follow) focus(); }
-  const now = performance.now(), running = runningSessions().filter(s => s.state.map === name);
+  const running = runningSessions().filter(s => s.state.map === name);
   const ownNames = new Set(running.map(s => s.state.name));
-  const seen = new Set();
-  const nearby = trackNearby(running.flatMap(s => s.state.nearby || []).filter(entity => {
-    const key = `${entity.kind}:${entity.name}:${entity.x}:${entity.y}`;
-    if (seen.has(key) || ownNames.has(entity.name)) return false;
-    seen.add(key); return true;
-  }), now);
+  for (const s of running) noteSample(s.id, s.state.at ?? Date.now());
+  // The newest report of each entity decides its name and whether it targets someone.
+  const entities = new Map();
+  for (const s of [...running].sort((a, b) => (a.state.at ?? 0) - (b.state.at ?? 0))) {
+    for (const entity of s.state.nearby || []) {
+      if (ownNames.has(entity.name)) continue;
+      const key = `e:${entity.id || `${entity.kind}:${entity.name}:${entity.x}:${entity.y}`}`;
+      addSample(key, s.state.at ?? Date.now(), entity.x, entity.y).entity = entity;
+      entities.set(key, { ...entity, key });
+    }
+  }
+  // An entity that left the reports stays until the replay reaches its last known position.
+  for (const [key, marker] of markers) if (marker.entity && !entities.has(key)) marker.gone = true;
   const own = running.map(s => {
     const effects = s.state.conditions || [], debuffs = effects.filter(e => e.kind === 'debuff'), buffs = effects.filter(e => e.kind === 'buff');
-    const target = s.state.target && nearby.find(e => e.kind === 'monster' && e.target);
-    return { id: s.id, key: track(`o:${s.id}`, s.state.x, s.state.y, now), name: s.state.name, x: s.state.x, y: s.state.y, color: classColors[s.state.ctype] || '#bcf878', dead: !!s.state.rip, ring: debuffs.length ? 'debuff' : buffs.length ? 'buff' : '', target: target?.key || null, tip: [s.state.name, ...effects.map(e => `${e.kind === 'debuff' ? '▼' : e.kind === 'buff' ? '▲' : '•'} ${e.name}`)].join('\n') };
+    const target = s.state.target && (s.state.nearby || []).find(e => e.kind === 'monster' && e.target);
+    const key = `o:${s.id}`; addSample(key, s.state.at ?? Date.now(), s.state.x, s.state.y);
+    return { id: s.id, key, name: s.state.name, x: s.state.x, y: s.state.y, color: classColors[s.state.ctype] || '#bcf878', dead: !!s.state.rip, ring: debuffs.length ? 'debuff' : buffs.length ? 'buff' : '', target: target ? `e:${target.id || `${target.kind}:${target.name}:${target.x}:${target.y}`}` : null, tip: [s.state.name, ...effects.map(e => `${e.kind === 'debuff' ? '▼' : e.kind === 'buff' ? '▲' : '•'} ${e.name}`)].join('\n') };
   });
+  for (const key of markers.keys()) if (key.startsWith('o:') && !own.some(o => o.key === key)) markers.delete(key);
   const saved = app.owned.filter(c => c.map === name && Number.isFinite(c.x) && !running.some(s => s.state.name?.toLowerCase() === c.name.toLowerCase())).map(c => ({ name: c.name, x: c.x, y: c.y }));
-  for (const [key, marker] of markers) if (marker.seen !== now) markers.delete(key);
-  scene = { own, nearby, saved };
+  scene = { own, nearby: [...entities.values()], saved };
   setText($('map-status'), running.length ? `${running.length} ${running.length === 1 ? 'postava' : 'postavy'} na této mapě · ${app.liveConnected ? 'živě přes WebSocket' : 'obnova každých 5 s (živé spojení se obnovuje)'}` : saved.length ? 'Na této mapě neběží žádná postava; zobrazeny jsou uložené pozice.' : 'Na této mapě teď nikdo není.');
   scheduleSide(); requestDraw();
 }
@@ -183,13 +213,13 @@ function circle(x, y, r, fill, stroke, lineWidth = 1, dash = null) {
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
   if (stroke) { ctx.setLineDash(dash || []); ctx.lineWidth = lineWidth; ctx.strokeStyle = stroke; ctx.stroke(); ctx.setLineDash([]); }
 }
-function draw(now) {
+function draw() {
   drawRequest = 0;
   if (!width || !height) return;
   const map = view.cache.get(view.current);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (!map || map.error || view.current !== currentMapName()) { ctx.fillStyle = COLORS.background; ctx.fillRect(0, 0, width, height); hits = []; return; }
-  const moving = glide(now);
+  const moving = replay();
   const followed = scene.own.find(o => o.id === view.follow);
   if (followed) { const marker = markers.get(followed.key); camera.x = marker.x; camera.y = marker.y; }
   drawLayer(map);
@@ -199,8 +229,10 @@ function draw(now) {
   const s = camera.scale, ox = width / 2 - camera.x * s, oy = height / 2 - camera.y * s;
   const at = key => { const marker = markers.get(key); return [ox + marker.x * s, oy + marker.y * s]; };
   hits = doorHits.map(door => ({ ...door, x: door.x + shiftX, y: door.y + shiftY }));
-  for (const entity of scene.nearby) {
-    const [x, y] = at(entity.key);
+  for (const [key, marker] of markers) {
+    const entity = marker.entity;
+    if (!entity) continue;
+    const [x, y] = at(key);
     if (!visible(x, y)) continue;
     const monster = entity.kind === 'monster';
     circle(x, y, monster ? 3.5 : 4, monster ? (entity.target ? COLORS.targeting : COLORS.monster) : COLORS.player, entity.target && monster ? '#fff' : null);

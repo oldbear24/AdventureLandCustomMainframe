@@ -34,11 +34,13 @@ export function sanitizeState(raw) {
   const num = value => Number.isFinite(value) ? value : 0;
   const str = (value, max = 40) => typeof value === 'string' ? value.slice(0, max) : '';
   const nearby = (Array.isArray(state.nearby) ? state.nearby.slice(0, 60) : []).filter(e => e && Number.isFinite(e.x) && Number.isFinite(e.y))
-    .map(e => ({ kind: e.kind === 'monster' ? 'monster' : 'character', name: str(e.name), x: Math.round(e.x), y: Math.round(e.y), target: !!e.target }));
+    .map(e => ({ id: str(e.id), kind: e.kind === 'monster' ? 'monster' : 'character', name: str(e.name), x: Math.round(e.x), y: Math.round(e.y), target: !!e.target }));
+  // When the game page sampled the state (server clock); a missing or implausible time falls back to now.
+  const at = Number.isFinite(state.at) && Math.abs(state.at - Date.now()) < 60_000 ? Math.round(state.at) : Date.now();
   return {
     name: str(state.name, 32), ctype: str(state.ctype, 20), level: num(state.level), hp: num(state.hp), max_hp: num(state.max_hp), mp: num(state.mp), max_mp: num(state.max_mp),
     gold: num(state.gold), xp: num(state.xp), map: str(state.map), x: num(state.x), y: num(state.y), rip: !!state.rip, ping: num(state.ping),
-    codeRunning: !!state.codeRunning, nearby, target: typeof state.target === 'string' ? state.target.slice(0, 40) : null, observedAt: new Date().toISOString(),
+    codeRunning: !!state.codeRunning, nearby, target: typeof state.target === 'string' ? state.target.slice(0, 40) : null, at, observedAt: new Date().toISOString(),
   };
 }
 
@@ -197,7 +199,7 @@ export class Runtime extends EventEmitter {
         const x = c.real_x ?? c.x, y = c.real_y ?? c.y;
         // Nearest visible monsters and players for the live map.
         const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
-          .map(e => ({ kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
+          .map(e => ({ id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
           .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
         return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null };
       };
@@ -207,7 +209,8 @@ export class Runtime extends EventEmitter {
         const state = window.__mainframeSnapshot();
         const json = state && JSON.stringify(state);
         if (!json || json === last) return;
-        last = json; window.__mainframeState(json).catch(() => {});
+        // The sampling time lets the map replay movement at its real pace, whatever the delivery delays.
+        last = json; window.__mainframeState(JSON.stringify({ ...state, at: Date.now() })).catch(() => {});
       }, interval);
     }, LIVE_INTERVAL));
     await this.loadScript(session, prefetched);
@@ -476,7 +479,7 @@ export class Runtime extends EventEmitter {
           const x = c.real_x ?? c.x, y = c.real_y ?? c.y;
           // Nearest visible monsters and players for the live map.
           const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
-            .map(e => ({ kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
+            .map(e => ({ id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
             .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
           const G = window.G || {}, now = Date.now(), items = Array.isArray(c.items) ? c.items : [];
           const count = pattern => items.reduce((sum, item) => sum + (item && pattern.test(item.name) ? (item.q || 1) : 0), 0);
@@ -495,7 +498,7 @@ export class Runtime extends EventEmitter {
             return { key, name: G.skills?.[key]?.name, ms: Number.isFinite(at) ? at - now : 0, cooldown };
           });
           const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
-          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null,
+          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: Date.now(),
             extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, party: c.party ? { leader: c.party, members } : null } };
         }));
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');

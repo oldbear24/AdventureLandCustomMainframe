@@ -234,7 +234,11 @@ test('values stored by CODE set() can be edited, deleted and cleared', async t =
 test('game state is sanitized before it reaches the panel', () => {
   const state = sanitizeState(JSON.stringify({ name: 'A'.repeat(100), level: 5, x: 1.5, y: 'bad', nearby: [{ kind: 'boss', name: 'goo', x: 1.4, y: 2, target: 1, extra: 'x' }, { x: 'nope' }], secret: 'x' }));
   assert.equal(state.name.length, 32); assert.equal(state.x, 1.5); assert.equal(state.y, 0);
-  assert.deepEqual(state.nearby, [{ kind: 'character', name: 'goo', x: 1, y: 2, target: true }]);
+  assert.deepEqual(state.nearby, [{ id: '', kind: 'character', name: 'goo', x: 1, y: 2, target: true }]);
+  assert.ok(Math.abs(state.at - Date.now()) < 1000, 'a missing sampling time falls back to now');
+  const sampled = Date.now() - 500, withTime = sanitizeState({ at: sampled, nearby: [{ id: 'm42', x: 0, y: 0 }] });
+  assert.equal(withTime.at, sampled); assert.equal(withTime.nearby[0].id, 'm42');
+  assert.ok(sanitizeState({ at: 5 }).at > 5, 'an implausible sampling time is replaced');
   assert.equal('secret' in state, false);
   assert.equal(sanitizeState('{broken'), null); assert.equal(sanitizeState('x'.repeat(70_000)), null);
 });
