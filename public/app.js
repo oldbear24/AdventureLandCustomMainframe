@@ -17,7 +17,49 @@ async function api(url, method = 'GET', body) {
 }
 let toastTimer;
 function toast(message, error = false) { $('toast').textContent = message; $('toast').className = error ? 'error' : ''; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6500); }
-function scriptOptions(selected = '', empty = 'Bez CODE', linkedOnly = false) { return `<option value="">${empty}</option>${dashboard.scripts.filter(s => !linkedOnly || s.remoteSlot).map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${escape(s.name)}${s.remoteSlot ? '' : ' · návrh'}</option>`).join('')}`; }
+function scriptOptions(selected = '', empty = 'Bez CODE', linkedOnly = false) { return `<option value="">${empty}</option>${dashboard.scripts.filter(s => !linkedOnly || s.remoteSlot).map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${escape(s.name)}${s.remoteSlot ? ` · slot ${escape(s.remoteSlot)}` : ' · návrh'}</option>`).join('')}`; }
+
+const views = ['overview', 'editor', 'logs'];
+function showView(view) {
+  if (!views.includes(view)) view = 'overview';
+  for (const name of views) $(`view-${name}`).hidden = name !== view;
+  for (const link of document.querySelectorAll('[data-view-link]')) {
+    if (link.dataset.viewLink === view) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+  }
+  if (location.hash !== `#${view}`) history.replaceState(null, '', `#${view}`);
+  if (view === 'logs') scrollLogsToBottom();
+}
+const usersOf = scriptId => dashboard.characters.filter(c => c.scriptId === scriptId);
+const isRunning = id => dashboard.sessions.some(s => s.id === id && s.status === 'running');
+const slotLabel = script => script.remoteSlot ? `Herní slot ${script.remoteSlot} · verze ${script.remoteVersion ?? '?'}` : 'Místní návrh · nelze spustit';
+
+function renderSetup() {
+  const steps = [
+    { done: dashboard.config.authConfigured, title: 'Připoj herní účet', hint: 'E-mail a heslo Adventure Land, nebo cookie u Steam účtu.', action: 'account', label: 'Připojit účet' },
+    { done: !!dashboard.gameApi?.configured, title: 'Připoj API token', hint: 'Token z Mainframe → Connect an AI. Slouží pro seznam postav a CODE sloty.', action: 'token', label: 'Vložit token' },
+    { done: dashboard.scripts.some(s => s.remoteSlot), title: 'Propoj CODE slot', hint: 'V CODE editoru načti herní sloty a propoj ten, který mají postavy spouštět.', action: 'editor', label: 'Otevřít editor' },
+    { done: dashboard.characters.length > 0, title: 'Přidej postavu', hint: 'Zvol jméno, server a propojený CODE slot.', action: 'add', label: 'Přidat postavu' },
+  ];
+  $('setup').hidden = steps.every(step => step.done);
+  $('setup-steps').innerHTML = steps.map((step, index) => `<li class="${step.done ? 'done' : ''}"><span class="check-mark" aria-hidden="true">${step.done ? '✓' : index + 1}</span><span class="step-text">${escape(step.title)}${step.done ? ' <span class="sr-only">(hotovo)</span>' : `<small>${escape(step.hint)}</small>`}</span>${step.done ? '' : `<button class="ghost" data-setup-action="${step.action}">${escape(step.label)}</button>`}</li>`).join('');
+}
+function characterCard(c, session) {
+  const state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
+  const dead = status === 'running' && state?.rip;
+  const labels = { running: dead ? 'DEAD' : 'ONLINE', starting: 'STARTUJI', reconnecting: 'OBNOVUJI', stopped: 'OFFLINE' };
+  const percentage = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
+  const script = dashboard.scripts.find(s => s.id === c.scriptId);
+  const codeState = state ? (state.codeRunning ? '<span class="code-state on">CODE běží</span>' : '<span class="code-state off">CODE stojí</span>') : '';
+  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}</strong><small>${script ? escape(slotLabel(script)) : 'Při startu se najde a stáhne automaticky.'}${codeState ? ` · ${codeState}` : ''}</small></div>${script ? `<button class="ghost" data-action="code" data-id="${c.id}">Upravit CODE</button>` : ''}</div>`;
+  const error = session?.error || session?.code?.error;
+  return `<article class="character-card ${status === 'running' ? 'is-running' : ''}">
+    <div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${labels[status]}</span></div>
+    <div class="meters"><div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div></div><div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div></div></div>
+    <div class="details"><span>${state ? escape(state.map) : 'Neběží'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div>
+    ${codeBox}${error ? `<p class="card-error">${escape(error)}</p>` : ''}
+    <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="logs" data-id="${c.id}">Logy</button><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
+  </article>`;
+}
 function render() {
   const sessions = new Map(dashboard.sessions.map(s => [s.id, s]));
   const running = dashboard.sessions.filter(s => s.status === 'running');
@@ -27,8 +69,8 @@ function render() {
   $('stat-status').textContent = dashboard.sessions.some(s => s.status === 'reconnecting') ? 'Obnovuji' : running.length ? 'Online' : 'Připraveno';
   $('last-update').textContent = `Aktualizováno ${new Date().toLocaleTimeString('cs-CZ')}`;
   $('uptime').textContent = `UPTIME ${Math.floor(dashboard.uptime / 3600)}h ${Math.floor(dashboard.uptime % 3600 / 60)}m`;
-  $('character-count').textContent = String(dashboard.characters.length).padStart(2, '0');
   $('auth-warning').hidden = dashboard.config.authConfigured;
+  renderSetup();
   const account = dashboard.account;
   const accountText = account?.configured ? (account.email ? `Přihlášen: ${account.email}` : 'Herní relace je připravena; ověří se při spuštění postavy.') : 'Účet není připojen';
   $('account-status').textContent = accountText;
@@ -40,25 +82,49 @@ function render() {
   $('disconnect-token').hidden = !dashboard.gameApi?.configured;
   $('load-code-slots').disabled = !dashboard.gameApi?.configured;
   $('add-character').disabled = dashboard.characters.length >= dashboard.config.maxCharacters;
-  $('characters').innerHTML = dashboard.characters.length ? dashboard.characters.map(c => {
-    const session = sessions.get(c.id), state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
-    const labels = { running: state?.rip ? 'DEAD' : 'ONLINE', starting: 'STARTUJI', reconnecting: 'OBNOVUJI', stopped: 'OFFLINE' };
-    const percentage = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
-    const script = dashboard.scripts.find(s => s.id === c.scriptId);
-    return `<article class="character-card"><div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} / ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}</small></div></div><span class="badge ${status}">${labels[status]}</span></div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div><div class="details"><span>${state ? escape(state.map) : 'Čeká na spuštění'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div><div class="card-script">⌘ ${script ? escape(script.name) : 'Bez skriptu'} ${state ? (state.codeRunning ? ' · CODE běží' : ' · CODE stojí') : ''}${c.autoStart ? ' · autostart' : ''}</div>${session?.error || session?.code?.error ? `<p class="card-error">${escape(session.error || session.code.error)}</p>` : ''}<div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''}>↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Upravit</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div></article>`;
-  }).join('') : '<div class="empty"><h2>Tvůj tým začíná tady.</h2><p>Přidej postavu, přiřaď CODE a spusť první relaci.</p></div>';
-  $('script-picker').innerHTML = scriptOptions(selectedScript, 'Nový skript');
+  $('characters').innerHTML = dashboard.characters.length ? dashboard.characters.map(c => characterCard(c, sessions.get(c.id))).join('') : '<div class="empty"><h2>Tvůj tým začíná tady.</h2><p>Přidej postavu, přiřaď jí herní CODE slot a spusť ji.</p></div>';
+  renderScriptList(); updateEditingHeader();
   const filter = $('log-filter').value;
-  $('log-filter').innerHTML = `<option value="all">Všechny postavy</option><option value="system">Systém</option>${dashboard.characters.map(c => `<option value="${c.id}">${escape(c.name)}</option>`).join('')}`;
+  const options = `<option value="all">Všechny postavy</option><option value="system">Systém</option>${dashboard.characters.map(c => `<option value="${c.id}">${escape(c.name)}</option>`).join('')}`;
+  // Rebuild only on change, so an open dropdown is not closed by the 5 s refresh.
+  if ($('log-filter').dataset.options !== options) { $('log-filter').innerHTML = options; $('log-filter').dataset.options = options; }
   $('log-filter').value = [...$('log-filter').options].some(o => o.value === filter) ? filter : 'all';
   renderLogs();
 }
+function renderScriptList() {
+  $('script-list').innerHTML = dashboard.scripts.length ? dashboard.scripts.map(script => {
+    const users = usersOf(script.id).map(c => c.name + (isRunning(c.id) ? ' (běží)' : ''));
+    return `<button class="script-item" role="listitem" data-script-id="${script.id}" aria-current="${script.id === selectedScript}"><strong>${escape(script.name)}</strong><span class="tag ${script.remoteSlot ? 'slot' : 'draft'}">${script.remoteSlot ? `SLOT ${escape(script.remoteSlot)} · v${escape(script.remoteVersion ?? '?')}` : 'NÁVRH'}</span><small>${users.length ? `Používá: ${escape(users.join(', '))}` : 'Nepoužívá žádná postava'}</small></button>`;
+  }).join('') : '<p class="muted">Zatím žádné skripty. Načti herní slot níže.</p>';
+}
+function updateEditingHeader() {
+  const script = dashboard?.scripts.find(s => s.id === selectedScript);
+  $('editing-name').textContent = $('script-name').value.trim() || script?.name || 'Nový návrh';
+  const chips = [];
+  if (script?.remoteSlot) chips.push(`<span class="meta-chip slot">Herní slot ${escape(script.remoteSlot)} · verze ${escape(selectedRemoteVersion ?? script.remoteVersion ?? '?')}</span>`);
+  else chips.push(`<span class="meta-chip draft">${script ? 'Místní návrh' : 'Nový místní návrh'} · postavy ho nespustí, dokud ho nepropojíš s herním slotem</span>`);
+  if (script) {
+    const users = usersOf(script.id);
+    chips.push(users.length ? users.map(c => `<span class="meta-chip ${isRunning(c.id) ? 'running' : ''}">${escape(c.name)}${isRunning(c.id) ? ' · běží' : ''}</span>`).join('') : '<span class="meta-chip">Nepřiřazeno žádné postavě</span>');
+  }
+  $('editing-meta').innerHTML = chips.join('');
+  $('dirty-state').textContent = dirty ? '● Neuložené změny' : 'Bez změn';
+  $('dirty-state').className = `state-pill ${dirty ? 'dirty' : 'saved'}`;
+  document.querySelector('.editor-panel').classList.toggle('is-dirty', dirty);
+  $('nav-dirty').hidden = !dirty;
+  const runningUsers = script ? usersOf(script.id).filter(c => isRunning(c.id)).length : 0;
+  $('save-script').textContent = script?.remoteSlot ? `Uložit do herního slotu ${script.remoteSlot}${runningUsers ? ` a aktualizovat ${runningUsers} ${runningUsers === 1 ? 'postavu' : 'postavy'}` : ''}` : 'Uložit návrh';
+  const source = $('script-source').value;
+  $('source-stats').textContent = `${source.split('\n').length} řádků · ${number(source.length)} znaků`;
+  $('import-target').textContent = script ? `Načtení nahradí obsah skriptu „${script.name}“ obsahem vybraného slotu.` : 'Načtení vytvoří nový propojený skript.';
+}
+function scrollLogsToBottom() { $('logs').scrollTop = $('logs').scrollHeight; $('logs-bottom').hidden = true; }
 function renderLogs() {
   const filter = $('log-filter').value, element = $('logs');
   const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 70;
   const logs = dashboard.logs.filter(l => filter === 'all' || (filter === 'system' ? !l.characterId : l.characterId === filter));
   element.innerHTML = logs.length ? logs.map(l => `<div class="log-line ${l.level === 'error' ? 'error' : ''}"><span class="log-time">${new Date(l.at).toLocaleTimeString('cs-CZ')}</span><span class="log-name">${escape(dashboard.characters.find(c => c.id === l.characterId)?.name || 'SYSTEM')}</span><div class="log-message">${escape(l.message)}</div></div>`).join('') : '<span class="log-time">Zatím žádné logy. Spusť postavu a sleduj její běh.</span>';
-  if (nearBottom) element.scrollTop = element.scrollHeight;
+  if (nearBottom) scrollLogsToBottom();
 }
 async function refresh(initial = false) {
   if (polling) return; polling = true;
@@ -100,9 +166,12 @@ $('disconnect-account').addEventListener('click', async () => {
   finally { $('disconnect-account').disabled = false; }
 });
 function openCharacter(character) {
-  $('character-form').reset(); $('character-id').value = character?.id || ''; $('dialog-title').textContent = character ? 'Upravit postavu' : 'Přidat postavu';
+  $('character-form').reset(); $('character-id').value = character?.id || ''; $('dialog-title').textContent = character?.id ? `Nastavení postavy ${character.name}` : 'Přidat postavu';
   $('character-name').value = character?.name || ''; $('character-region').value = character?.region || 'EU'; $('character-server').value = character?.server || 'I'; $('character-autostart').checked = character?.autoStart || false;
-  $('character-script').innerHTML = scriptOptions(character?.scriptId || '', 'Bez CODE', true); $('character-dialog').showModal();
+  $('character-script').innerHTML = scriptOptions(character?.scriptId || '', 'Automaticky – výchozí CODE postavy', true);
+  const scriptHint = () => { $('character-script-hint').textContent = $('character-script').value ? 'Před každým startem se CODE stáhne z vybraného herního slotu.' : 'Při startu se najde výchozí CODE slot postavy ve hře, stáhne se a přiřadí. Vyžaduje API token.'; };
+  $('character-script').onchange = scriptHint; scriptHint();
+  $('character-dialog').showModal();
 }
 $('add-character').addEventListener('click', () => openCharacter()); $('close-dialog').addEventListener('click', () => $('character-dialog').close());
 $('character-form').addEventListener('submit', async event => {
@@ -119,22 +188,37 @@ $('characters').addEventListener('click', async event => {
   const { id, action } = button.dataset;
   if (action === 'transfer') return openTransfer(id);
   if (action === 'edit') return openCharacter(dashboard.characters.find(c => c.id === id));
+  if (action === 'logs') { $('log-filter').value = id; showView('logs'); renderLogs(); return scrollLogsToBottom(); }
+  if (action === 'code') {
+    const scriptId = dashboard.characters.find(c => c.id === id)?.scriptId;
+    if (scriptId === selectedScript || await selectScript(scriptId)) showView('editor');
+    return;
+  }
   if (action === 'delete' && !confirm('Smazat tuto postavu z panelu?')) return;
   pending.add(id); render();
-  try { await api(`/characters/${id}${action === 'delete' ? '' : `/${action}`}`, action === 'delete' ? 'DELETE' : 'POST', {}); toast(action === 'start' ? 'Požadavek zpracován. Stav připojení uvidíš na kartě.' : 'Hotovo.'); }
+  try { await api(`/characters/${id}${action === 'delete' ? '' : `/${action}`}`, action === 'delete' ? 'DELETE' : 'POST', {}); toast(action === 'start' ? 'CODE stažen, postava se připojuje. Stav uvidíš na kartě.' : 'Hotovo.'); }
   catch (error) { toast(error.message, true); }
   finally { pending.delete(id); await refresh(); }
 });
 function newScript() {
-  selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; $('save-script').textContent = 'Uložit návrh'; $('script-picker').value = ''; $('script-name').value = ''; $('script-source').value = '// Adventure Land CODE\n// Vlož vlastní skript a přiřaď ho postavě.\n'; $('delete-script').hidden = true; dirty = false; $('editor-note').textContent = 'Místní návrh. Pro běh ho propoj s herním slotem.';
+  selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; $('script-name').value = ''; $('script-source').value = '// Adventure Land CODE\n// Vlož vlastní skript a přiřaď ho postavě.\n'; $('delete-script').hidden = true; dirty = false; $('editor-note').textContent = 'Místní návrh. Pro běh ho propoj s herním slotem.';
+  if (dashboard) { renderScriptList(); updateEditingHeader(); }
 }
 function setEditor(script) {
   selectedScript = script.id; selectedRemoteVersion = script.remoteVersion || null; selectedRemoteSlot = script.remoteSlot || null;
-  $('script-name').value = script.name; $('script-source').value = script.source; $('script-picker').value = script.id;
+  $('script-name').value = script.name; $('script-source').value = script.source;
   $('delete-script').hidden = false; dirty = false;
-  $('save-script').textContent = selectedRemoteSlot ? 'Uložit herní slot' : 'Uložit návrh';
   $('delete-script').textContent = selectedRemoteSlot ? 'Odpojit slot z panelu' : 'Smazat návrh';
-  $('editor-note').textContent = selectedRemoteSlot ? `Herní slot ${selectedRemoteSlot} · verze ${selectedRemoteVersion}. Uložení aktualizuje běžící CODE.` : 'Místní návrh. Pro běh ho propoj s herním slotem.';
+  $('editor-note').textContent = selectedRemoteSlot ? 'Uložení zapíše herní slot a aktualizuje postavy, které ho spouští.' : 'Místní návrh. Pro běh ho propoj s herním slotem.';
+  if (dashboard) { renderScriptList(); updateEditingHeader(); }
+}
+async function selectScript(id) {
+  if (dirty && !confirm('V editoru máš neuložené změny. Zahodit je?')) return false;
+  if (!id) { newScript(); return true; }
+  document.querySelector('.editor-panel').inert = true;
+  try { setEditor(await api(`/scripts/${id}`)); return true; }
+  catch (error) { toast(error.message, true); return false; }
+  finally { document.querySelector('.editor-panel').inert = false; }
 }
 $('load-code-slots').addEventListener('click', async () => {
   $('load-code-slots').disabled = true;
@@ -150,43 +234,53 @@ $('load-code-slots').addEventListener('click', async () => {
 $('import-code-slot').addEventListener('click', async () => {
   const slot = $('code-slot-picker').value;
   if (!slot) return;
-  if ((dirty || (selectedScript && !selectedRemoteSlot && $('script-source').value)) && !confirm('Načíst obsah herního slotu místo návrhu v editoru?')) return;
+  if ((dirty || (selectedScript && !selectedRemoteSlot && $('script-source').value)) && !confirm('Načíst obsah herního slotu místo obsahu v editoru?')) return;
   $('import-code-slot').disabled = true; document.querySelector('.editor-panel').inert = true;
   try {
     const script = await api(`/code-slots/${encodeURIComponent(slot)}/import`, 'POST', { scriptId: selectedScript || null });
-    setEditor(script); await refresh(); toast('Společný herní slot propojen.');
+    await refresh(); setEditor(script); toast('Herní slot propojen.');
   } catch (error) { toast(error.message, true); }
   finally { $('import-code-slot').disabled = false; document.querySelector('.editor-panel').inert = false; }
 });
-$('new-script').addEventListener('click', () => { if (!dirty || confirm('Zahodit neuložené změny?')) newScript(); });
-$('script-picker').addEventListener('change', async () => {
-  const id = $('script-picker').value;
-  if (dirty && !confirm('Zahodit neuložené změny?')) { $('script-picker').value = selectedScript; return; }
-  if (!id) return newScript();
-  document.querySelector('.editor-panel').inert = true;
-  try { setEditor(await api(`/scripts/${id}`)); }
-  catch (error) { $('script-picker').value = selectedScript; toast(error.message, true); }
-  finally { document.querySelector('.editor-panel').inert = false; }
+$('new-script').addEventListener('click', () => selectScript(''));
+$('script-list').addEventListener('click', event => {
+  const item = event.target.closest('[data-script-id]');
+  if (item && item.dataset.scriptId !== selectedScript) selectScript(item.dataset.scriptId);
 });
-for (const id of ['script-name', 'script-source']) $(id).addEventListener('input', () => { dirty = true; $('editor-note').textContent = 'Neuložené změny'; });
+for (const id of ['script-name', 'script-source']) $(id).addEventListener('input', () => { dirty = true; $('editor-note').textContent = 'Změny zatím nejsou uložené.'; updateEditingHeader(); });
 $('script-source').addEventListener('keydown', event => {
   if (event.key === 'Tab') { event.preventDefault(); const field = event.target; field.setRangeText('  ', field.selectionStart, field.selectionEnd, 'end'); field.dispatchEvent(new Event('input')); }
+  if ((event.ctrlKey || event.metaKey) && event.key === 's') { event.preventDefault(); $('save-script').click(); }
 });
 $('save-script').addEventListener('click', async () => {
   $('save-script').disabled = true; document.querySelector('.editor-panel').inert = true;
   try {
     const script = await api(`/scripts${selectedScript ? `/${selectedScript}` : ''}`, selectedScript ? 'PUT' : 'POST', { name: $('script-name').value, source: $('script-source').value, ...(selectedScript ? { expectedVersion: selectedRemoteVersion } : {}) });
-    setEditor(script); $('editor-note').textContent = script.remoteSlot ? `Uloženo do herního slotu ${script.remoteSlot}. Běh postav se synchronizuje.` : 'Uloženo jako návrh. Pro běh načti společný herní slot.'; toast(script.remoteSlot ? 'Herní slot uložen. Běh postav se synchronizuje.' : 'Návrh uložen.'); await refresh();
+    await refresh(); setEditor(script);
+    $('editor-note').textContent = script.remoteSlot ? `Uloženo do herního slotu ${script.remoteSlot}. Běh postav se synchronizuje.` : 'Uloženo jako návrh. Pro běh načti společný herní slot.';
+    toast(script.remoteSlot ? 'Herní slot uložen. Běh postav se synchronizuje.' : 'Návrh uložen.');
   } catch (error) { toast(error.message, true); }
   finally { $('save-script').disabled = false; document.querySelector('.editor-panel').inert = false; }
 });
 $('delete-script').addEventListener('click', async () => {
   if (!selectedScript || !confirm(selectedRemoteSlot ? 'Odpojit tento slot z panelu? Herní CODE zůstane uložený.' : 'Smazat tento návrh?')) return;
-  try { await api(`/scripts/${selectedScript}`, 'DELETE', {}); newScript(); await refresh(); } catch (error) { toast(error.message, true); }
+  try { await api(`/scripts/${selectedScript}`, 'DELETE', {}); await refresh(); newScript(); } catch (error) { toast(error.message, true); }
 });
-$('log-filter').addEventListener('change', renderLogs);
+$('log-filter').addEventListener('change', () => { renderLogs(); scrollLogsToBottom(); });
+$('logs').addEventListener('scroll', () => { const element = $('logs'); $('logs-bottom').hidden = element.scrollHeight - element.scrollTop - element.clientHeight < 70; });
+$('logs-bottom').addEventListener('click', scrollLogsToBottom);
+for (const link of document.querySelectorAll('[data-view-link]')) link.addEventListener('click', () => showView(link.dataset.viewLink));
+window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+$('setup-steps').addEventListener('click', event => {
+  const action = event.target.closest('[data-setup-action]')?.dataset.setupAction;
+  if (action === 'account') openAccount();
+  if (action === 'token') { openAccount(); $('token-option').open = true; $('api-token').focus(); }
+  if (action === 'editor') showView('editor');
+  if (action === 'add') openCharacter();
+});
 function renderOwned() {
-  $('owned-characters').innerHTML = ownedCharacters.length ? ownedCharacters.map((c, index) => `<div class="owned-row"><div><strong>${escape(c.name)}</strong><small>${escape(c.class)} · LVL ${number(c.level)}${c.online ? ' · online' : ''}</small></div><button class="ghost" data-owned-index="${index}">Přidat do panelu</button></div>`).join('') : '<p class="muted">API nevrátilo žádné postavy.</p>';
+  const added = new Set(dashboard.characters.map(c => c.name.toLowerCase()));
+  $('owned-characters').innerHTML = ownedCharacters.length ? ownedCharacters.map((c, index) => `<div class="owned-row"><div><strong>${escape(c.name)}</strong><small>${escape(c.class)} · LVL ${number(c.level)}${c.region ? ` · ${escape(c.region)} ${escape(c.server)}` : ''}${c.online ? ' · online' : ''}${c.codeSlot ? ' · má výchozí CODE slot' : ''}</small></div>${added.has(c.name.toLowerCase()) ? '<span class="muted">V panelu</span>' : `<button class="ghost" data-owned-index="${index}">Přidat do panelu</button>`}</div>`).join('') : '<p class="muted">API nevrátilo žádné postavy.</p>';
 }
 $('account-dialog').addEventListener('close', clearCredentials);
 $('api-token-form').addEventListener('submit', async event => {
@@ -211,7 +305,11 @@ $('load-owned').addEventListener('click', async () => {
 });
 $('owned-characters').addEventListener('click', event => {
   const button = event.target.closest('[data-owned-index]');
-  if (button) openCharacter({ name: ownedCharacters[Number(button.dataset.ownedIndex)].name });
+  if (!button) return;
+  const owned = ownedCharacters[Number(button.dataset.ownedIndex)];
+  // Prefer an already linked script for the character's default slot; otherwise start detects it.
+  const linked = dashboard.scripts.find(s => owned.codeSlot && s.remoteSlot === owned.codeSlot);
+  openCharacter({ name: owned.name, region: owned.region || 'EU', server: owned.server || 'I', scriptId: linked?.id || null });
 });
 function invalidateTransfer() { transferQuote = null; $('transfer-review').hidden = true; }
 function transferFields() {
@@ -273,4 +371,6 @@ $('confirm-transfer').addEventListener('click', async () => {
   finally { $('transfer-form').inert = false; $('reload-transfer').disabled = false; }
 });
 window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
+showView(location.hash.slice(1));
+newScript();
 await refresh(true); setInterval(() => { if (active) refresh(); }, 5000);

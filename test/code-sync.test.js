@@ -21,6 +21,7 @@ async function fixture(t) {
     const input = JSON.parse(options.body); assert.equal(input.token, `mcp_${'a'.repeat(43)}`);
     if (!cloud.available) throw new Error('Fixture offline');
     const method = url.slice(url.lastIndexOf('/') + 1);
+    if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'Warrior', character_id: 'CH_warrior', level: 50, class: 'warrior', assignment: { code_slot: '1', server: 'EU I' } }] });
     if (method === 'list_codes') return Response.json({ success: true, codes: cloud.code ? [{ slot: '1', name: cloud.code.name, version: cloud.code.version }] : [] });
     if (method === 'get_code') return Response.json(cloud.code ? { success: true, code: { ...cloud.code } } : { failed: true, reason: 'not_found' });
     if (method === 'save_code') { cloud.writes++; cloud.code = { ...cloud.code, code: input.code, name: input.name, version: cloud.code.version + 1 }; return Response.json({ success: true, code: { slot: '1', version: cloud.code.version } }); }
@@ -117,4 +118,23 @@ test('start downloads the slot before connecting and refuses to connect when the
   await runtime.start(id);
   assert.equal(f.store.snapshot().scripts[0].source, f.cloud.code.code); assert.equal(launches, 1);
   assert.ok(runtime.logs.some(l => l.message.includes('CODE stažen ze slotu 1 (verze 4)')));
+});
+test('start without assigned CODE detects, downloads and assigns the character default slot', async t => {
+  const f = await fixture(t);
+  const runtime = new Runtime(f.runtime.config, f.store, { launch: async () => { throw new Error('No browser in tests'); } }, f.api);
+  t.after(() => runtime.close());
+  const id = randomUUID();
+  await f.store.update(state => state.characters.push({ id, name: 'warrior', region: 'EU', server: 'I', scriptId: null, autoStart: false }));
+  await runtime.start(id);
+  const character = f.store.snapshot().characters.find(c => c.id === id), script = f.store.snapshot().scripts.find(s => s.id === character.scriptId);
+  assert.equal(script.remoteSlot, '1'); assert.equal(script.source, f.cloud.code.code);
+  assert.ok(runtime.logs.some(l => l.message.includes('Detekován výchozí CODE postavy: slot 1')));
+  await runtime.stop(id);
+  // The slot is reused, not duplicated, and an empty default slot starts without CODE.
+  await f.store.update(state => { state.characters.find(c => c.id === id).scriptId = null; });
+  await runtime.start(id); await runtime.stop(id); assert.equal(f.store.snapshot().scripts.length, 1);
+  await f.store.update(state => { state.characters.find(c => c.id === id).scriptId = null; }); f.cloud.code = null;
+  await runtime.start(id);
+  assert.equal(f.store.snapshot().characters.find(c => c.id === id).scriptId, null);
+  assert.ok(runtime.logs.some(l => l.message.includes('je prázdný; postava poběží bez CODE')));
 });

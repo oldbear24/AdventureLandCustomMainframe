@@ -4,6 +4,18 @@ import path from 'node:path';
 import { scriptSchema } from './store.js';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
+const SLOT = /^[a-zA-Z0-9_-]{1,64}$/;
+function defaultSlotOf(character) {
+  const slot = [character.assignment?.code_slot, character.character_id].find(value => typeof value === 'string' && SLOT.test(value));
+  return slot || null;
+}
+// Last known realm: "EU IV" from a Mainframe assignment, or "SR_EUIV" from the account snapshot.
+function realmOf(character) {
+  const assigned = /^(EU|US|ASIA) ([a-zA-Z0-9_-]{1,24})$/.exec(character.assignment?.server || '');
+  const snapshot = /^SR_(EU|US|ASIA)([a-zA-Z0-9_-]{1,24})$/.exec(character.profile?.server || '');
+  const match = snapshot || assigned;
+  return match ? { region: match[1], server: match[2] } : { region: null, server: null };
+}
 // Separate encrypted record and key; a game-login cookie and an API token are independent.
 export class GameApi {
   constructor(config, request = fetch) {
@@ -41,8 +53,15 @@ export class GameApi {
     // Never proxy the full upstream profile, which can contain game authentication fields.
     return result.characters.filter(c => /^[a-zA-Z0-9_]{1,32}$/.test(c.character)).map(c => ({
       name: c.character, level: Number(c.level) || 0, class: typeof c.class === 'string' ? c.class : '',
-      online: !!c.profile?.online,
+      online: !!c.profile?.online, ...realmOf(c), codeSlot: defaultSlotOf(c),
     }));
+  }
+  // The game keeps one default CODE slot per character, named after its character id.
+  defaultSlot(name) {
+    return this.exclusive(async () => {
+      const characters = await this.call(this.vault.config.authCookie);
+      return characters.find(c => c.name.toLowerCase() === name.toLowerCase())?.codeSlot || null;
+    });
   }
   connect(token) {
     return this.exclusive(async () => {

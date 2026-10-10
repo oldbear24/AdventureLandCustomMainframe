@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export const GAME_ORIGIN = 'https://adventure.land';
 export const LOG_LIMIT = 200;
@@ -69,20 +69,24 @@ export class Runtime {
   start(id) { return this.exclusive(() => this.startInternal(id)); }
   async startInternal(id) {
     if (this.closing) throw new Error('Server se vypíná.');
-    const character = this.store.snapshot().characters.find(c => c.id === id);
+    let character = this.store.snapshot().characters.find(c => c.id === id);
     if (!character) throw new Error('Postava neexistuje.');
     if (!this.config.authCookie) throw new Error('Připoj herní účet v panelu nebo nastav AL_AUTH_COOKIE.');
+    if (this.sessions.has(id)) return;
+    if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
+    const downloadFailed = error => Object.assign(new Error(`Stažení CODE před startem selhalo: ${this.redact(error.message)}`), { status: 502 });
+    if (!character.scriptId) {
+      try { character = await this.detectDefaultScript(character); } catch (error) { throw downloadFailed(error); }
+    }
     if (character.scriptId) {
       const script = this.store.snapshot().scripts.find(s => s.id === character.scriptId);
       if (!script?.remoteSlot) throw Object.assign(new Error('Propoj CODE s herním slotem. Místní návrh nelze spustit.'), { status: 409 });
       if (!this.gameApi?.status().configured) throw Object.assign(new Error('Pro společný herní CODE připoj API token.'), { status: 409 });
     }
-    if (this.sessions.has(id)) return;
-    if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
     // Download the current slot before logging in, so a missing or unreachable CODE stops the start early.
     let prefetched;
     try { prefetched = await this.downloadScript(character); }
-    catch (error) { throw Object.assign(new Error(`Stažení CODE před startem selhalo: ${this.redact(error.message)}`), { status: 502 }); }
+    catch (error) { throw downloadFailed(error); }
     if (prefetched) this.log(id, 'info', `CODE stažen ze slotu ${prefetched.remoteSlot} (verze ${prefetched.remoteVersion}): ${prefetched.name}`);
     const session = { id, character, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null, prefetched };
     this.sessions.set(id, session);
@@ -139,6 +143,32 @@ export class Runtime {
     await this.loadScript(session, prefetched);
     session.status = 'running'; session.error = null; session.attempts = 0;
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
+  }
+  // A character without assigned CODE gets its own default game slot, linked as a shared script.
+  async detectDefaultScript(character) {
+    if (!this.gameApi?.status().configured) return character;
+    const slot = await this.gameApi.defaultSlot(character.name);
+    if (!slot) { this.log(character.id, 'info', 'Výchozí CODE slot postavy nebyl nalezen; postava poběží bez CODE.'); return character; }
+    let current;
+    try { current = await this.gameApi.getCode(slot); }
+    catch (error) {
+      if (error.status !== 404) throw error;
+      this.log(character.id, 'info', `Výchozí CODE slot postavy (${slot}) je prázdný; postava poběží bez CODE.`); return character;
+    }
+    const script = await this.store.update(state => {
+      const updatedAt = new Date().toISOString();
+      let linked = state.scripts.find(s => s.remoteSlot === slot);
+      if (linked) Object.assign(linked, current, { updatedAt });
+      else {
+        if (state.scripts.length >= 100) throw new Error('Limit je 100 skriptů.');
+        linked = { ...current, id: randomUUID(), updatedAt }; state.scripts.push(linked);
+      }
+      const stored = state.characters.find(c => c.id === character.id);
+      if (stored) stored.scriptId = linked.id;
+      return linked;
+    });
+    this.log(character.id, 'info', `Detekován výchozí CODE postavy: slot ${slot} (${script.name}). Přiřazen k postavě.`);
+    return { ...character, scriptId: script.id };
   }
   // Reads the character's current CODE from its game slot and refreshes the local copy.
   async downloadScript(character, fetched = null) {

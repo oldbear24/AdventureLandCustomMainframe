@@ -11,28 +11,79 @@
     <div class="logo">AL<span>▧</span></div><p class="eyebrow">YOUR SERVER. YOUR ADVENTURE.</p>
     <h1>Vlastní mainframe.</h1><p class="muted">Postavy online. Kód pod kontrolou.</p>
     <form id="login-form"><label for="username">Přihlašovací jméno</label><input id="username" name="username" value="admin" autocomplete="username" required maxlength="80"><label for="password">Heslo správce</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="primary" type="submit">Otevřít mainframe <span>→</span></button><p id="login-error" class="error" role="alert"></p></form>
-    <p class="fine">ADVENTURE LAND / SELF-HOSTED CONTROL ROOM</p>
   </main>
   <div id="panel" hidden>
     <aside>
       <div class="brand"><div class="logo small">AL<span>▧</span></div><div><strong>Mainframe</strong><small>ADVENTURE LAND</small></div></div>
-      <div class="nav"><span class="nav-active">▦ &nbsp; Řídicí panel</span><button id="open-account" class="ghost">◉ &nbsp; Herní účet</button><a href="https://adventure.land/" target="_blank" rel="noopener noreferrer">↗ &nbsp; Otevřít hru</a><a href="https://adventure.land/docs" target="_blank" rel="noopener noreferrer">⌘ &nbsp; CODE dokumentace</a></div>
-      <div class="aside-bottom"><span class="dot"></span> Vlastní infrastruktura<small id="uptime"></small><button id="logout" class="ghost">Odhlásit se ↗</button></div>
+      <nav class="nav" aria-label="Sekce panelu">
+        <button class="nav-link" data-view-link="overview" aria-current="page"><span aria-hidden="true">▦</span> Postavy</button>
+        <button class="nav-link" data-view-link="editor"><span aria-hidden="true">⌘</span> CODE editor<em id="nav-dirty" class="nav-dirty" hidden>●</em></button>
+        <button class="nav-link" data-view-link="logs"><span aria-hidden="true">≡</span> Logy</button>
+        <button id="open-account" class="nav-link"><span aria-hidden="true">◉</span> Herní účet</button>
+      </nav>
+      <div class="nav-external"><a href="https://adventure.land/" target="_blank" rel="noopener noreferrer">↗ Otevřít hru</a><a href="https://adventure.land/docs" target="_blank" rel="noopener noreferrer">↗ CODE dokumentace</a></div>
+      <div class="aside-bottom"><span><span class="dot"></span> Vlastní server</span><small id="uptime"></small><button id="logout" class="ghost">Odhlásit se</button></div>
     </aside>
     <main class="workspace">
-      <header><div><p class="eyebrow">CONTROL ROOM <span>/ LIVE</span></p><h1>Tvoje dobrodružství.<br><span>V nepřetržitém provozu.</span></h1></div><div class="server-pill"><span class="dot"></span> SELF-HOSTED</div></header>
-      <div class="account-bar"><div><strong>Adventure Land účet</strong><p id="account-status">Účet není připojen</p></div><button id="manage-account" class="ghost">Připojit účet</button></div>
-      <div id="auth-warning" class="notice" hidden>Připoj herní účet tlačítkem výše, aby šlo spustit postavy.</div>
-      <section class="surface owned-panel"><div class="section-head"><div><h2>Postavy herního účtu</h2><p id="api-status">Připoj API token v dialogu Herní účet.</p></div><button id="load-owned" class="ghost">Načíst seznam</button></div><div id="owned-characters" class="owned-list"></div></section>
-      <section class="stats" aria-label="Přehled"><div><p>AKTIVNÍ POSTAVY</p><strong id="stat-online">0<span>/ 4</span></strong><small>Samostatné herní relace</small></div><div><p>CODE SKRIPTY</p><strong id="stat-scripts">0</strong><small>Uloženo na tvém serveru</small></div><div><p>CELKEM GOLD</p><strong id="stat-gold">—</strong><small>Z připojených postav</small></div><div><p>STAV SPOJENÍ</p><strong id="stat-status" class="status-value">Připraveno</strong><small id="last-update">Čekám na data</small></div></section>
-      <section class="section"><div class="section-head"><div><h2>Postavy <span id="character-count">00</span></h2><p>Spouštění, stav a ovládání tvého týmu.</p></div><button id="add-character" class="primary">+ Přidat postavu</button></div><div id="characters" class="character-grid"></div></section>
-      <section class="lower-grid"><div class="surface editor-panel"><div class="section-head"><div><p class="eyebrow">WORKSPACE</p><h2>CODE editor</h2></div><button id="new-script" class="ghost">+ Nový</button></div><label for="script-picker" class="sr-only">Vybrat skript</label><select id="script-picker"><option value="">Nový skript</option></select><div class="shared-code"><p class="fine">Pro běh používej stejný uložený CODE slot jako v prohlížeči. Změny slotu se automaticky načítají každých 30 sekund.</p><button id="load-code-slots" class="ghost">Načíst herní sloty</button><label for="code-slot-picker">Společný herní CODE slot</label><select id="code-slot-picker"><option value="">Nejdřív načti sloty</option></select><button id="import-code-slot" class="ghost" disabled>Načíst a propojit slot</button></div><label for="script-name">Název skriptu</label><input id="script-name" placeholder="např. warrior-farm"><label for="script-source">JavaScript CODE</label><textarea id="script-source" spellcheck="false" placeholder="// Sem vlož svůj Adventure Land CODE."></textarea><div class="editor-footer"><span id="editor-note">Místní návrh. Pro běh ho propoj s herním slotem.</span><button id="save-script" class="primary">Uložit skript</button></div><button id="delete-script" class="ghost danger" hidden>Smazat skript</button></div>
-      <div class="surface log-panel"><div class="section-head"><div><p class="eyebrow">TELEMETRY</p><h2>Živé logy <span class="live-dot"></span></h2></div><label for="log-filter" class="sr-only">Filtrovat logy</label><select id="log-filter"><option value="all">Všechny postavy</option><option value="system">Systém</option></select></div><div id="logs" class="logs" role="log" aria-label="Herní logy"></div><div class="log-footer">Posledních 200 záznamů · obnova každých 5 sekund</div></div></section>
-      <footer>ADVENTURE LAND CUSTOM MAINFRAME <span>Built to keep your party moving.</span></footer>
+      <section id="view-overview" class="view" aria-labelledby="overview-title">
+        <header class="page-head"><div><p class="eyebrow">PŘEHLED</p><h1 id="overview-title">Tvoje postavy</h1></div><button id="add-character" class="primary">+ Přidat postavu</button></header>
+        <div class="account-bar"><div><strong>Adventure Land účet</strong><p id="account-status">Účet není připojen</p></div><button id="manage-account" class="ghost">Připojit účet</button></div>
+        <div id="auth-warning" class="notice" hidden>Postavy zatím nejde spustit: připoj herní účet tlačítkem <strong>Připojit účet</strong>.</div>
+        <section id="setup" class="setup surface" aria-labelledby="setup-title" hidden><h2 id="setup-title">Než postavy spustíš</h2><ol id="setup-steps" class="setup-steps"></ol></section>
+        <section class="stats" aria-label="Souhrn">
+          <div><p>AKTIVNÍ POSTAVY</p><strong id="stat-online">0<span>/ 4</span></strong></div>
+          <div><p>CODE SKRIPTY</p><strong id="stat-scripts">0</strong></div>
+          <div><p>CELKEM GOLD</p><strong id="stat-gold">—</strong></div>
+          <div><p>STAV</p><strong id="stat-status" class="status-value">Připraveno</strong><small id="last-update">Čekám na data</small></div>
+        </section>
+        <div id="characters" class="character-grid"></div>
+        <section class="surface owned-panel"><div class="section-head"><div><h2>Postavy herního účtu</h2><p id="api-status">Připoj API token v dialogu Herní účet.</p></div><button id="load-owned" class="ghost">Načíst seznam</button></div><div id="owned-characters" class="owned-list"></div></section>
+      </section>
+
+      <section id="view-editor" class="view" aria-labelledby="editor-view-title" hidden>
+        <header class="page-head"><div><p class="eyebrow">CODE</p><h1 id="editor-view-title">CODE editor</h1></div></header>
+        <div class="editor-layout">
+          <div class="script-sidebar">
+            <div class="surface">
+              <div class="section-head compact"><h2>Skripty</h2><button id="new-script" class="ghost small-button">+ Nový návrh</button></div>
+              <div id="script-list" class="script-list" role="list"></div>
+            </div>
+            <div class="surface shared-code">
+              <h2>Načíst ze hry</h2>
+              <p class="fine">Postavy spouští CODE uložený v herním slotu, stejně jako prohlížeč. Změny slotu se načítají automaticky každých 30 sekund.</p>
+              <button id="load-code-slots" class="ghost">Načíst herní sloty</button>
+              <label for="code-slot-picker">Herní CODE slot</label>
+              <select id="code-slot-picker"><option value="">Nejdřív načti sloty</option></select>
+              <button id="import-code-slot" class="ghost" disabled>Načíst a propojit slot</button>
+              <p id="import-target" class="fine"></p>
+            </div>
+          </div>
+          <div class="surface editor-panel">
+            <div id="editing-header" class="editing-header">
+              <div class="editing-title"><p class="eyebrow">UPRAVUJEŠ</p><h2 id="editing-name">Nový návrh</h2></div>
+              <span id="dirty-state" class="state-pill saved">Bez změn</span>
+            </div>
+            <div id="editing-meta" class="editing-meta"></div>
+            <label for="script-name">Název skriptu</label>
+            <input id="script-name" placeholder="např. warrior-farm" maxlength="120">
+            <div class="source-label"><label for="script-source">JavaScript CODE</label><span id="source-stats"></span></div>
+            <textarea id="script-source" spellcheck="false" placeholder="// Sem vlož svůj Adventure Land CODE."></textarea>
+            <div class="editor-footer">
+              <span id="editor-note">Místní návrh. Pro běh ho propoj s herním slotem.</span>
+              <div class="editor-buttons"><button id="delete-script" class="ghost danger" hidden>Smazat skript</button><button id="save-script" class="primary">Uložit skript</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-logs" class="view" aria-labelledby="logs-title" hidden>
+        <header class="page-head"><div><p class="eyebrow">TELEMETRIE</p><h1 id="logs-title">Živé logy <span class="live-dot"></span></h1></div><div class="log-tools"><label for="log-filter">Zobrazit</label><select id="log-filter"><option value="all">Všechny postavy</option><option value="system">Systém</option></select></div></header>
+        <div class="surface log-panel"><div id="logs" class="logs" role="log" aria-label="Herní logy" tabindex="0"></div><div class="log-footer"><span>Posledních 200 záznamů · obnova každých 5 sekund</span><button id="logs-bottom" class="ghost small-button" hidden>↓ Na nejnovější</button></div></div>
+      </section>
     </main>
   </div>
-  <dialog id="account-dialog"><div class="section-head"><h2>Adventure Land účet</h2><button type="button" id="close-account" class="ghost" aria-label="Zavřít">×</button></div><p id="account-dialog-status" class="muted"></p><form id="game-login-form"><label for="game-email">E-mail herního účtu</label><input id="game-email" type="email" autocomplete="username" required maxlength="254"><label for="game-password">Herní heslo</label><input id="game-password" type="password" autocomplete="current-password" required maxlength="1024"><p class="fine">Přihlášení proběhne přes Adventure Land. Heslo se neukládá; získaná relace je na serveru uložena šifrovaně.</p><button class="primary" type="submit">Přihlásit k Adventure Land</button></form><details class="cookie-option"><summary>Steam účet nebo přihlášení pomocí cookie</summary><form id="game-cookie-form"><label for="game-cookie">Hodnota cookie auth z adventure.land</label><input id="game-cookie" type="password" autocomplete="off" required maxlength="4096"><p class="fine">Použij cookie z již přihlášeného herního klientu. Při spuštění postavy aplikace ověří platnost relace.</p><button type="submit" class="ghost">Uložit herní cookie</button></form></details><details class="cookie-option"><summary>API token — Connect an AI / MCP</summary><form id="api-token-form"><label for="api-token">Adventure Land API token</label><input id="api-token" type="password" autocomplete="off" required pattern="mcp_[A-Za-z0-9_-]{43}" maxlength="47"><p class="fine">Token načte seznam postav. Pro jejich běh a převody zůstává potřeba herní přihlášení. Token se ukládá šifrovaně.</p><button class="ghost" type="submit">Připojit API token</button></form><button id="disconnect-token" class="ghost danger" hidden>Odpojit API token</button></details><p id="game-account-error" class="error" role="alert"></p><button id="disconnect-account" class="ghost danger" hidden>Odpojit účet a zastavit postavy</button></dialog>
+  <dialog id="account-dialog"><div class="section-head"><h2>Adventure Land účet</h2><button type="button" id="close-account" class="ghost" aria-label="Zavřít">×</button></div><p id="account-dialog-status" class="muted"></p><form id="game-login-form"><label for="game-email">E-mail herního účtu</label><input id="game-email" type="email" autocomplete="username" required maxlength="254"><label for="game-password">Herní heslo</label><input id="game-password" type="password" autocomplete="current-password" required maxlength="1024"><p class="fine">Přihlášení proběhne přes Adventure Land. Heslo se neukládá; získaná relace je na serveru uložena šifrovaně.</p><button class="primary" type="submit">Přihlásit k Adventure Land</button></form><details class="cookie-option"><summary>Steam účet nebo přihlášení pomocí cookie</summary><form id="game-cookie-form"><label for="game-cookie">Hodnota cookie auth z adventure.land</label><input id="game-cookie" type="password" autocomplete="off" required maxlength="4096"><p class="fine">Použij cookie z již přihlášeného herního klientu. Při spuštění postavy aplikace ověří platnost relace.</p><button type="submit" class="ghost">Uložit herní cookie</button></form></details><details id="token-option" class="cookie-option"><summary>API token — Connect an AI / MCP</summary><form id="api-token-form"><label for="api-token">Adventure Land API token</label><input id="api-token" type="password" autocomplete="off" required pattern="mcp_[A-Za-z0-9_-]{43}" maxlength="47"><p class="fine">Token načte seznam postav a herní CODE sloty. Pro běh postav a převody zůstává potřeba herní přihlášení. Token se ukládá šifrovaně.</p><button class="ghost" type="submit">Připojit API token</button></form><button id="disconnect-token" class="ghost danger" hidden>Odpojit API token</button></details><p id="game-account-error" class="error" role="alert"></p><button id="disconnect-account" class="ghost danger" hidden>Odpojit účet a zastavit postavy</button></dialog>
   <dialog id="transfer-dialog"><div class="section-head"><h2>Poslat z postavy</h2><button type="button" id="close-transfer" class="ghost" aria-label="Zavřít">×</button></div><p id="transfer-from" class="muted"></p><button id="reload-transfer" class="ghost">Obnovit inventář</button><p class="fine">Příjemce musí být poblíž na stejné mapě a serveru. Zlato podléhá herním pravidlům včetně případného poplatku.</p><form id="transfer-form"><label for="transfer-to">Přesné jméno příjemce</label><input id="transfer-to" required pattern="[a-zA-Z0-9_]{1,32}" maxlength="32" list="recipient-names"><datalist id="recipient-names"></datalist><label for="transfer-type">Co poslat</label><select id="transfer-type"><option value="gold">Zlato</option><option value="item">Předmět</option></select><div id="transfer-gold-fields"><label for="transfer-amount">Částka zlata</label><input id="transfer-amount" type="number" min="1" step="1" required></div><div id="transfer-item-fields" hidden><label for="transfer-item">Předmět v inventáři</label><select id="transfer-item"></select><label for="transfer-quantity">Počet</label><input id="transfer-quantity" type="number" min="1" step="1" value="1"></div><button class="ghost" type="submit">Připravit převod</button></form><div id="transfer-review" hidden><p id="transfer-summary"></p><button id="confirm-transfer" class="primary">Potvrdit a odeslat</button></div><p id="transfer-result" role="status"></p><p id="transfer-error" class="error" role="alert"></p></dialog>
-  <dialog id="character-dialog"><form id="character-form"><div class="section-head"><h2 id="dialog-title">Přidat postavu</h2><button type="button" id="close-dialog" class="ghost" aria-label="Zavřít">×</button></div><input type="hidden" id="character-id"><label for="character-name">Jméno postavy ve hře</label><input id="character-name" pattern="[a-zA-Z0-9_]{1,32}" required maxlength="32"><div class="form-row"><div><label for="character-region">Region</label><select id="character-region"><option>EU</option><option>US</option><option>ASIA</option></select></div><div><label for="character-server">Server</label><input id="character-server" value="I" required pattern="[a-zA-Z0-9_-]{1,24}" maxlength="24"></div></div><label for="character-script">Skript</label><select id="character-script"><option value="">Bez CODE</option></select><label class="check"><input id="character-autostart" type="checkbox">Spustit automaticky při startu serveru</label><p class="fine">Před spuštěním odpoj postavu z ostatních klientů. Po přidání ji spustíš tlačítkem Start.</p><button class="primary" type="submit">Uložit postavu</button></form></dialog>
+  <dialog id="character-dialog"><form id="character-form"><div class="section-head"><h2 id="dialog-title">Přidat postavu</h2><button type="button" id="close-dialog" class="ghost" aria-label="Zavřít">×</button></div><input type="hidden" id="character-id"><label for="character-name">Jméno postavy ve hře</label><input id="character-name" pattern="[a-zA-Z0-9_]{1,32}" required maxlength="32"><div class="form-row"><div><label for="character-region">Region</label><select id="character-region"><option>EU</option><option>US</option><option>ASIA</option></select></div><div><label for="character-server">Server</label><input id="character-server" value="I" required pattern="[a-zA-Z0-9_-]{1,24}" maxlength="24"></div></div><label for="character-script">CODE (herní slot)</label><select id="character-script"><option value="">Bez CODE</option></select><p id="character-script-hint" class="fine"></p><label class="check"><input id="character-autostart" type="checkbox">Spustit automaticky při startu serveru</label><p class="fine">Před spuštěním odpoj postavu z ostatních klientů. Po uložení ji spustíš tlačítkem Start.</p><button class="primary" type="submit">Uložit postavu</button></form></dialog>
 </body>
 </html>

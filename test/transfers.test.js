@@ -39,13 +39,13 @@ test('API token uses official read-only endpoint, remains encrypted and survives
   const f = await fixture(t, async (url, options) => {
     assert.equal(url, 'https://adventure.land/mcp_api/mainframe_list_characters');
     assert.equal(options.redirect, 'error'); assert.deepEqual(JSON.parse(options.body), { token: apiToken });
-    return Response.json({ success: true, characters: [{ character: 'OwnedWarrior', level: 42, class: 'warrior', profile: { online: true, secret: 'private-character-secret' } }] });
+    return Response.json({ success: true, characters: [{ character: 'OwnedWarrior', character_id: 'CH_owned', level: 42, class: 'warrior', profile: { online: true, server: 'SR_EUIV', secret: 'private-character-secret' }, assignment: { code_slot: 'CH_owned', server: 'US I' } }] });
   });
   assert.equal((await f.request('/api/owned-characters')).status, 401);
   await f.login(); assert.equal((await f.request('/api/owned-characters')).status, 409);
   assert.equal((await f.request('/api/account/token', 'POST', { token: 'bad' })).status, 400);
   const connected = await f.request('/api/account/token', 'POST', { token: apiToken });
-  assert.equal(connected.status, 200); assert.deepEqual(connected.data.characters, [{ name: 'OwnedWarrior', level: 42, class: 'warrior', online: true }]);
+  assert.equal(connected.status, 200); assert.deepEqual(connected.data.characters, [{ name: 'OwnedWarrior', level: 42, class: 'warrior', online: true, region: 'EU', server: 'IV', codeSlot: 'CH_owned' }]);
   assert.equal(JSON.stringify(connected.data).includes('private-character-secret'), false);
   assert.equal((await readFile(path.join(f.directory, 'api-token.enc.json'), 'utf8')).includes(apiToken), false);
   assert.equal(JSON.stringify((await f.request('/api/dashboard')).data).includes(apiToken), false);
