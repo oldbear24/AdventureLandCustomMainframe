@@ -29,7 +29,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 ## Co umí
 
 - Správa až 4 postav: region, server, přiřazený skript, start, stop, opětovné načtení CODE.
-- Společné uložené CODE sloty s prohlížečem: automatické načítání změn přibližně každých 30 sekund a ukládání z panelu do stejného herního slotu. Místní skripty slouží jako návrhy.
+- Společné uložené CODE sloty s prohlížečem: automatické načítání změn přibližně každých 30 sekund (včetně modulů načtených přes `require_code`/`load_code`) a ukládání z panelu do stejného herního slotu. Místní skripty slouží jako návrhy.
 - Stav postav, HP/MP, level, mapa, gold, stav CODE a živé herní/CODE logy (nové záznamy přicházejí okamžitě přes WebSocket `/api/live`; při výpadku spojení se načítají s obnovou každých 5 sekund).
 - Kontrola vlastnictví a online stavu před připojením. Automatické opakování při výpadku s prodlevou 10 sekund až 5 minut.
 - Volitelný autostart uložených postav po restartu. Tlačítko Stop autostart dané postavy vypne.
@@ -181,7 +181,7 @@ Bez přiřazeného skriptu se postava připojí a zůstane bez aktivního CODE. 
 
 ## Společný CODE s prohlížečem
 
-Zdrojem CODE je uložený slot tvého herního účtu. Panel uchovává jeho místní kopii, ale při startu, obnově spojení a **↻ CODE** čte aktuální obsah ze hry. Běžící postavy kontrolují své sloty za normálního spojení přibližně každých 30 sekund. Změna zdrojového kódu restartuje CODE všech místních postav přiřazených ke stejnému slotu; nezměněný zdroj se zbytečně nerestartuje.
+Zdrojem CODE je uložený slot tvého herního účtu. Panel uchovává jeho místní kopii, ale při startu, obnově spojení a **↻ CODE** čte aktuální obsah ze hry. Běžící postavy kontrolují své sloty za normálního spojení přibližně každých 30 sekund. Změna zdrojového kódu restartuje CODE všech místních postav přiřazených ke stejnému slotu; nezměněný zdroj se zbytečně nerestartuje. Pokud CODE načítá další sloty přes `require_code("99")` nebo `load_code(...)`, panel si zapamatuje jejich verze a při změně kteréhokoli z nich CODE postavy znovu načte, takže i hlavní slot, který jen volá `require_code`, vždy běží s poslední verzí modulů. Moduly se stahují přímo ze hry při každém spuštění CODE.
 
 **Načíst a propojit slot** převezme herní obsah do editoru bez zápisu do hry. **Uložit herní slot** naopak zapíše změny do stejného slotu a hned je předá místním běžícím postavám. Editor kontroluje verzi před uložením: pokud byl slot mezitím změněn, žádá nové načtení a sloučení změn. Herní API neposkytuje atomickou podmínku verze pro zápis, proto se vyhni současnému ukládání ze dvou editorů.
 

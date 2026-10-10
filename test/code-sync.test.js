@@ -16,13 +16,13 @@ async function fixture(t) {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-code-sync-'));
   const config = configFromEnv({ ADMIN_PASSWORD: 'fixture-password-long-enough', DATA_DIR: directory, AL_AUTH_COOKIE: 'fixture-cookie' });
   const store = new Store(directory); await store.init();
-  const cloud = { code: { slot: '1', name: 'Shared farm', version: 1, code: 'console.log("cloud v1");' }, available: true, writes: 0 };
+  const cloud = { code: { slot: '1', name: 'Shared farm', version: 1, code: 'console.log("cloud v1");' }, available: true, writes: 0, modules: [] };
   const api = new GameApi(config, async (url, options) => {
     const input = JSON.parse(options.body); assert.equal(input.token, `mcp_${'a'.repeat(43)}`);
     if (!cloud.available) throw new Error('Fixture offline');
     const method = url.slice(url.lastIndexOf('/') + 1);
     if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'Warrior', character_id: 'CH_warrior', level: 50, class: 'warrior', assignment: { code_slot: '1', server: 'EU I' } }] });
-    if (method === 'list_codes') return Response.json({ success: true, codes: cloud.code ? [{ slot: '1', name: cloud.code.name, version: cloud.code.version }] : [] });
+    if (method === 'list_codes') return Response.json({ success: true, codes: [...(cloud.code ? [{ slot: '1', name: cloud.code.name, version: cloud.code.version }] : []), ...cloud.modules] });
     if (method === 'get_code') return Response.json(cloud.code ? { success: true, code: { ...cloud.code } } : { failed: true, reason: 'not_found' });
     if (method === 'save_code') { cloud.writes++; cloud.code = { ...cloud.code, code: input.code, name: input.name, version: cloud.code.version + 1 }; return Response.json({ success: true, code: { slot: '1', version: cloud.code.version } }); }
     throw new Error('Unexpected live method');
@@ -43,7 +43,7 @@ async function sessionFixture(f, scriptId, name = 'Warrior') {
   const id = randomUUID();
   await f.store.update(state => state.characters.push({ id, name, region: 'EU', server: 'I', scriptId, autoStart: false }));
   const window = { code_run: false, code_active: false, starts: 0, code: '', character: { name, gold: 1000, items: [] }, socket: { connected: true } };
-  window.start_runner = (_id, source) => { window.code = source; window.starts++; window.code_run = window.code_active = true; };
+  window.start_runner = (_id, source) => { window.code = source; window.starts++; window.code_run = window.code_active = true; window.onStart?.(); };
   window.stop_runner = () => { window.code_run = window.code_active = false; };
   const page = { evaluate: async (fn, input) => runInNewContext(`(${fn.toString()})(input)`, { window, input }), waitForFunction: async () => assert.equal(window.code_active, true) };
   const session = { id, status: 'running', page, context: { close: async () => { window.socket.connected = false; } }, attempts: 0 };
@@ -82,6 +82,24 @@ test('saving from panel writes the shared slot and reloads assigned runners; con
   f.cloud.code = { ...f.cloud.code, version: 3, code: 'console.log("newer browser edit");' };
   const conflict = await f.request(`/api/scripts/${script.id}`, 'PUT', { ...input, source: 'console.log("stale editor");', expectedVersion: '2' });
   assert.equal(conflict.status, 409); assert.equal(f.cloud.writes, 1); assert.equal(f.cloud.code.code, 'console.log("newer browser edit");');
+});
+test('a change in a slot loaded by require_code reloads the CODE even when the main slot is unchanged', async t => {
+  const f = await fixture(t), script = (await f.request('/api/code-slots/1/import', 'POST', {})).data;
+  f.cloud.modules = [{ slot: '99', name: 'fighter-shared', version: 11 }];
+  const running = await sessionFixture(f, script.id);
+  running.window.onStart = () => {
+    f.runtime.trackModule(running.session, running.session.page, 'https://adventure.land/code.js?name=99&xrequire=1&timestamp=1');
+    f.runtime.trackModule(running.session, running.session.page, 'https://example.com/code.js?name=evil');
+    f.runtime.trackModule(running.session, {}, 'https://adventure.land/code.js?name=stale-page');
+  };
+  await f.runtime.loadScript(running.session);
+  assert.deepEqual(f.runtime.snapshot()[0].code.modules, [{ name: '99', version: '11' }]);
+  f.runtime.nextCodeSync = 0; await f.runtime.syncSharedScripts(); assert.equal(running.window.starts, 1);
+  f.cloud.modules = [{ slot: '99', name: 'fighter-shared', version: 12 }];
+  f.runtime.nextCodeSync = 0; await f.runtime.syncSharedScripts();
+  assert.equal(running.window.starts, 2); assert.deepEqual(f.runtime.snapshot()[0].code.modules, [{ name: '99', version: '12' }]);
+  assert.ok(f.runtime.logs.some(l => l.message.includes('Změnil se modul CODE 99 (verze 11 → 12)')));
+  f.runtime.nextCodeSync = 0; await f.runtime.syncSharedScripts(); assert.equal(running.window.starts, 2);
 });
 test('API failure pauses code and recovery resumes current slot; deleted slot never falls back to cache', async t => {
   const f = await fixture(t), script = (await f.request('/api/code-slots/1/import', 'POST', {})).data;

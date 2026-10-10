@@ -90,7 +90,9 @@ function characterCard(c, session) {
   const script = dashboard.scripts.find(s => s.id === c.scriptId);
   const codeState = state ? (state.codeRunning ? '<span class="code-state on">CODE běží</span>' : '<span class="code-state off">CODE stojí</span>') : '';
   const slotText = script?.remoteSlot ? `Herní slot ${shortSlot(script.remoteSlot)} · verze ${script.remoteVersion ?? '?'}` : script ? slotLabel(script) : 'Při startu se najde a stáhne automaticky.';
-  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}</strong><small title="${escape(script ? slotLabel(script) : '')}">${escape(slotText)}</small>${codeState ? `<small>${codeState}</small>` : ''}</div>${script ? `<button class="ghost" data-action="code" data-id="${c.id}">Upravit CODE</button>` : ''}</div>`;
+  const modules = session?.code?.modules || [];
+  const moduleText = modules.length ? `Moduly: ${modules.map(m => `${m.name}${m.version ? ` v${m.version}` : ''}`).join(', ')}` : '';
+  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}</strong><small title="${escape(script ? slotLabel(script) : '')}">${escape(slotText)}</small>${moduleText ? `<small title="Sloty načtené přes require_code/load_code; jejich změna CODE automaticky znovu načte.">${escape(moduleText)}</small>` : ''}${codeState ? `<small>${codeState}</small>` : ''}</div>${script ? `<button class="ghost" data-action="code" data-id="${c.id}">Upravit CODE</button>` : ''}</div>`;
   const error = session?.error || session?.code?.error;
   const alerts = session?.alerts || [];
   const xp = state?.max_xp ? `<div><div class="meter-label"><span>XP</span><span>${percentage(state.xp, state.max_xp).toFixed(1)} %${session?.stats?.etaMs ? ` · LVL ${state.level + 1} za ${duration(session.stats.etaMs)}` : ''}</span></div><div class="meter xp"><i style="--fill:${percentage(state.xp, state.max_xp)}%"></i></div></div>` : '';

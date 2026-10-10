@@ -155,6 +155,7 @@ export class Runtime extends EventEmitter {
     page.setDefaultTimeout(15_000);
     page.on('console', message => this.log(session.id, message.type() === 'error' ? 'error' : 'info', message.text()));
     page.on('pageerror', error => this.log(session.id, 'error', error.message));
+    page.on('request', request => this.trackModule(session, page, request.url()));
     // Check account ownership and presence on the selection page before logging in.
     const selection = new URL(`/server/${encodeURIComponent(session.character.region)}/${encodeURIComponent(session.character.server)}/`, GAME_ORIGIN);
     selection.searchParams.set('no_graphics', 'true');
@@ -256,6 +257,7 @@ export class Runtime extends EventEmitter {
   async loadScript(session, fetched = null) {
     const character = this.store.snapshot().characters.find(c => c.id === session.id);
     const script = await this.downloadScript(character, fetched);
+    session.modules = new Map();
     await withDeadline(session.page.evaluate(source => {
       if (window.code_run) window.stop_runner();
       if (source) window.start_runner('maincode', source);
@@ -264,6 +266,28 @@ export class Runtime extends EventEmitter {
     session.codeHash = script ? createHash('sha256').update(script.source).digest('hex') : null;
     session.code = script ? { slot: script.remoteSlot, version: script.remoteVersion, syncedAt: new Date().toISOString(), error: null } : null;
     this.log(session.id, 'info', script ? `CODE: ${script.name}` : 'Postava připojena bez CODE.');
+    // Remember the versions of modules loaded at start; a failed check is retried by the next sync.
+    if (session.modules.size && this.gameApi?.status().configured) await this.gameApi.listCodes().then(codes => this.changedModules(session, codes)).catch(() => {});
+  }
+  // require_code() and load_code() in the game runner fetch other CODE slots from /code.js?name=<slot or name>.
+  trackModule(session, page, url) {
+    if (session.page !== page || !session.modules) return;
+    let parsed;
+    try { parsed = new URL(url); } catch { return; }
+    if (parsed.origin !== GAME_ORIGIN || parsed.pathname !== '/code.js') return;
+    const name = parsed.searchParams.get('name');
+    if (name && name.length <= 80 && !session.modules.has(name)) session.modules.set(name, null);
+  }
+  // Records the first seen version of each loaded module and returns the modules whose slot changed since.
+  changedModules(session, codes) {
+    const changed = [];
+    for (const [name, version] of session.modules || []) {
+      const code = codes.find(c => c.slot === name) || codes.find(c => c.name === name);
+      if (!code) continue;
+      if (version === null) session.modules.set(name, code.version);
+      else if (version !== code.version) changed.push(`${name} (verze ${version} → ${code.version})`);
+    }
+    return changed;
   }
   reload(id) { return this.exclusive(async () => {
     const session = this.sessions.get(id);
@@ -307,6 +331,25 @@ export class Runtime extends EventEmitter {
       } catch (error) {
         for (const session of this.sessions.values()) if (session.status === 'running' && this.store.snapshot().characters.find(c => c.id === session.id)?.scriptId === id) await this.pauseCode(session, error);
       }
+    }
+    await this.syncModules();
+  }
+  // A main slot that only calls require_code("99") keeps its version when slot 99 changes, so loaded modules are checked too.
+  async syncModules() {
+    const watched = [...this.sessions.values()].filter(s => s.status === 'running' && s.modules?.size && !s.code?.error);
+    if (!watched.length || !this.gameApi?.status().configured) return;
+    let codes;
+    try { codes = await this.gameApi.listCodes(); this.moduleSyncError = null; }
+    catch (error) {
+      const message = `Kontrola modulů CODE selhala: ${this.redact(error.message)}`;
+      if (this.moduleSyncError !== message) this.log(null, 'error', message);
+      this.moduleSyncError = message; return;
+    }
+    for (const session of watched) {
+      const changed = this.changedModules(session, codes);
+      if (!changed.length) continue;
+      this.log(session.id, 'info', `Změnil se modul CODE ${changed.join(', ')}; načítám CODE znovu.`);
+      try { await this.loadScript(session); } catch (error) { await this.pauseCode(session, error); }
     }
   }
   async inventory(id) {
@@ -508,8 +551,9 @@ export class Runtime extends EventEmitter {
   }
   snapshot() {
     const now = Date.now();
-    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt, code, alerts, lastActivityAt, autoReloads, attempts }) => ({
-      id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, code, attempts,
+    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt, code, modules, alerts, lastActivityAt, autoReloads, attempts }) => ({
+      id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, attempts,
+      code: code ? { ...code, modules: [...(modules || [])].map(([name, version]) => ({ name, version })) } : code,
       alerts: (alerts || []).map(a => ({ ...a, message: this.redact(a.message) })), idleMs: status === 'running' && lastActivityAt ? now - lastActivityAt : null, autoReloads: autoReloads || 0,
       stats: this.stats.has(id) ? summarizeStats(this.stats.get(id), status === 'running' ? state : null, now) : null,
     }));
