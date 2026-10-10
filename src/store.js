@@ -26,14 +26,18 @@ export const savedScriptSchema = scriptSchema.extend({
   remoteSlot: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().default(null),
   remoteVersion: z.string().max(100).nullable().default(null),
 });
+const LOOK_KEY = /^[a-zA-Z0-9_]{1,40}$/;
+// Last seen skin and cosmetics of each character, keyed by character id.
+const lookSchema = z.object({ skin: z.string().regex(LOOK_KEY), cx: z.record(z.string().regex(/^[a-z]{1,16}$/), z.string().regex(LOOK_KEY)) });
 const stateSchema = z.object({
   version: z.literal(1),
   characters: z.array(characterSchema.extend({ id: z.string().uuid() })),
   scripts: z.array(savedScriptSchema),
+  looks: z.record(z.string(), lookSchema).default({}),
 });
 
 export class Store {
-  constructor(dir) { this.dir = dir; this.state = { version: 1, characters: [], scripts: [] }; this.queue = Promise.resolve(); }
+  constructor(dir) { this.dir = dir; this.state = { version: 1, characters: [], scripts: [], looks: {} }; this.queue = Promise.resolve(); }
   async init() {
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     try { this.state = stateSchema.parse(JSON.parse(await readFile(path.join(this.dir, 'state.json'), 'utf8'))); }

@@ -29,6 +29,16 @@ const G = {
   imagesets: { pack_20: { size: 20, rows: 4, columns: 8, file: '/images/tiles/items/pack_20vt8.png' }, pack_1a: { size: 16, rows: 2, columns: 2, file: '/images/tiles/items/pack_1a.png?v=11' }, evil: { size: 20, rows: 1, columns: 1, file: 'https://example.com/x.png' }, sneaky: { size: 20, rows: 1, columns: 1, file: '/images/../secret.png' } },
   titles: { lucky: { type: 'all_items', luck: 2, title: 'Lucky' } }, sets: {}, skills: {},
   positions: { hpot0: ['', 4, 2], ring: ['pack_1a', 1, 1], outside: ['', 8, 0] },
+  sprites: {
+    chara7: { file: '/images/tiles/characters/chara7.png', columns: 4, rows: 2, matrix: [['fmage', null, null, null], [null, null, null, null]] },
+    marmor12: { file: '/images/cosmetics/armors/marmor12.png?v=2', type: 'armor', columns: 4, rows: 2, matrix: [['marmor12a', 'marmor12b', 'marmor12c', 'marmor12d'], [null, null, null, null]] },
+    mskin1: { file: '/images/cosmetics/skins/mskin1.png', type: 'skin', columns: 1, rows: 1, matrix: [['mskin1a']] },
+    makeup1: { file: '/images/cosmetics/makeup/makeup1.png', type: 'head', columns: 2, rows: 1, matrix: [['makeup117', 'makeup105']] },
+    evil: { file: 'https://evil.example/x.png', columns: 1, rows: 1, matrix: [['evilskin']] },
+  },
+  images: { '/images/tiles/characters/chara7.png': { width: 312, height: 288 }, '/images/cosmetics/armors/marmor12.png': { width: 324, height: 288 }, '/images/cosmetics/skins/mskin1.png': { width: 81, height: 144 }, '/images/cosmetics/makeup/makeup1.png': { width: 54, height: 120 } },
+  dimensions: {}, classes: { merchant: { looks: [['marmor12a', { head: 'makeup105', hat: 'nohat' }]] } },
+  cosmetics: { default_head_place: 7, default_hair_place: 7, default_hat_place: 7, default_face_position: 7, default_makeup_position: 0, default_beard_position: 0, head: {}, hair: {}, hat: {}, prop: {}, head_y: {} },
 };
 const dataJs = `var G=${JSON.stringify(G)};`;
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fixture image')]);
@@ -68,6 +78,27 @@ test('item icon sheets are fetched once from the game and must be PNG', async ()
   await assert.rejects(data.sheet('../x'), { status: 400 });
   const html = new GameData(serve(Buffer.from('<html>')));
   await assert.rejects(html.sheet('pack_20'), { status: 502 });
+});
+test('character sprites are layered like the game draws them', async () => {
+  const urls = [];
+  const data = new GameData(async url => { urls.push(url); return serve()(url); });
+  // A full sprite is one layer: a 26×36 frame of the 4×2 sheet, facing down, scaled 1.5× into a 40×50 box.
+  assert.deepEqual(await data.characterSprite({ skin: 'fmage', cx: { head: 'makeup117' } }), {
+    width: 40, height: 50, layers: [{ sheet: 'chara7', left: 0.5, bottom: 0, width: 39, height: 54, imageX: -38.625, imageY: 0, imageWidth: 468, imageHeight: 432 }],
+  });
+  // An armor gets the skin of its head below it and the head above; an unknown hat is dropped.
+  const merchant = await data.characterSprite({ ctype: 'merchant' });
+  assert.deepEqual(merchant.layers.map(l => [l.sheet, l.bottom, l.imageX]), [['mskin1', 0, -40.5], ['marmor12', 0, -40.5], ['makeup1', 10.5, -40.5]]);
+  assert.deepEqual(await data.characterSprite({ skin: 'marmor12a', cx: { head: 'makeup105' } }), merchant);
+  // Without a head an armor wears the game's default one.
+  assert.equal((await data.characterSprite({ skin: 'marmor12a', cx: {} })).layers[2].imageX, 0);
+  await assert.rejects(data.characterSprite({ ctype: 'nobody' }), { status: 404 });
+  await assert.rejects(data.characterSprite({ skin: 'evilskin' }), { status: 404 });
+  assert.deepEqual(await data.spriteSheet('marmor12'), png);
+  assert.deepEqual(await data.sheet('pack_1a'), png);
+  assert.deepEqual(urls.slice(1), ['https://adventure.land/images/cosmetics/armors/marmor12.png?v=2', 'https://adventure.land/images/tiles/items/pack_1a.png?v=11']);
+  await assert.rejects(data.spriteSheet('evil'), { status: 404 });
+  await assert.rejects(data.spriteSheet('pack_1a'), { status: 404 });
 });
 test('item details and stats are computed like the game', async () => {
   const names = await new GameData(serve()).itemNames();
@@ -165,6 +196,12 @@ test('saved inventories and bank come from the API token without leaking extra f
   assert.equal(sheet.status, 200); assert.equal(sheet.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await sheet.arrayBuffer()), png);
   assert.equal((await f.image('/api/item-sheets/evil')).status, 404);
+  const sprite = await f.request('/api/character-sprites?skin=marmor12a&cx=head:makeup105,hat:nohat');
+  assert.equal(sprite.status, 200); assert.deepEqual(sprite.data.layers.map(l => l.sheet), ['mskin1', 'marmor12', 'makeup1']);
+  assert.equal((await f.request('/api/character-sprites?class=merchant')).data.layers.length, 3);
+  assert.equal((await f.request('/api/character-sprites?class=nobody')).status, 404);
+  assert.equal((await f.request('/api/character-sprites?skin=a&cx=head')).status, 400);
+  assert.equal((await f.image('/api/sprite-sheets/chara7')).headers.get('content-type'), 'image/png');
   assert.equal((await fetch(sheet.url)).status, 401);
 });
 test('a running character is read live, including the bank while inside it', async t => {

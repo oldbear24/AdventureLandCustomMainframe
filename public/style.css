@@ -86,6 +86,10 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .character-title{display:flex;gap:12px;align-items:center;min-width:0}
 .avatar{width:40px;height:40px;flex:none;display:grid;place-items:center;color:var(--accent);background:#26371d;border:1px solid #445938;border-radius:9px;font:18px Consolas,monospace}
+.avatar.sprite{width:44px;height:52px;align-items:end;overflow:hidden}
+.avatar.sprite>div{position:relative;overflow:hidden}
+.avatar.sprite span{position:absolute;background-repeat:no-repeat;image-rendering:pixelated}
+.avatar.sprite.dead{filter:grayscale(1);opacity:.55}
 .character-title h3{margin:0 0 3px;font-size:16px;overflow-wrap:anywhere}
 .character-title small{font:11px Consolas,monospace;color:#8ba597}
 .badge{font:10px Consolas,monospace;letter-spacing:1px;padding:5px 8px;border-radius:4px;color:#9cb1a5;background:#24312a;white-space:nowrap}

@@ -33,7 +33,7 @@ const browserType = {
         navigations.push(url.pathname);
         assert.match(route.request().headers().cookie || '', /auth=fixture-user-fixture-auth-secret/);
         const body = url.pathname.startsWith('/server/') ? `<script>window.user_id=${JSON.stringify(accountValid ? 'fixture-user' : '')}; window.X={characters:${JSON.stringify(owned ? [{ name: 'TestWarrior', online: alreadyOnline }] : [])},servers:[{region:'EU',name:'I'}]};</script>` : url.pathname.startsWith('/character/') ? `<!doctype html><body><script>
-          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,xp:5000,max_xp:20000,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40,isize:42,party:'TestWarrior',s:{cursed:{ms:5000},mluck:{ms:60000,f:'Merchant'}}};window.sentTransfers=[];
+          window.character={name:'TestWarrior',ctype:'warrior',skin:'mwarrior',cx:{head:'makeup117'},level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,xp:5000,max_xp:20000,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40,isize:42,party:'TestWarrior',s:{cursed:{ms:5000},mluck:{ms:60000,f:'Merchant'}}};window.sentTransfers=[];
           window.G={conditions:{cursed:{name:'Cursed',debuff:true},mluck:{name:"Merchant's Luck",buff:true}},skills:{supershot:{name:'Super Shot',cooldown:30000},attack:{name:'Attack'}}};
           window.next_skill={attack:new Date(Date.now()+400),supershot:new Date(Date.now()+20000)};
           window.party={TestWarrior:{type:'warrior',level:42,map:'main',x:20,y:40},Healer:{type:'priest',level:40,map:'main',x:50,y:80}};
@@ -84,10 +84,11 @@ function iconSheet() {
 }
 const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
   imagesets: { pack_20: { size: 20, rows: 2, columns: 2, file: '/images/tiles/items/pack_20vt8.png' } }, positions: { hpot0: ['', 1, 0] },
+  sprites: { chara6: { file: '/images/tiles/characters/chara6.png', columns: 1, rows: 1, matrix: [['mwarrior']] } }, images: { '/images/tiles/characters/chara6.png': { width: 40, height: 40 } },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
   geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
 const gameData = new GameData(async url => {
-  if (url === `${GAME_ORIGIN}/images/tiles/items/pack_20vt8.png`) return new Response(iconSheet());
+  if ([`${GAME_ORIGIN}/images/tiles/items/pack_20vt8.png`, `${GAME_ORIGIN}/images/tiles/characters/chara6.png`].includes(url)) return new Response(iconSheet());
   assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`);
 });
 const app = createApp(config, store, runtime, account, gameApi, gameData);
@@ -345,6 +346,9 @@ try {
   await page.locator('[data-action=reload]').click();
   await page.waitForFunction(() => document.querySelector('[data-action=reload]').disabled === false);
   assert.ok(runtime.logs.some(l => l.message.includes('reloaded fixture')));
+  // The card shows the character's sprite, drawn from the proxied game sheet, instead of its initial.
+  await page.waitForSelector('.character-card .avatar.sprite span');
+  assert.equal(await page.evaluate(async () => (await fetch(getComputedStyle(document.querySelector('.avatar.sprite span')).backgroundImage.slice(5, -2))).headers.get('content-type')), 'image/png');
   await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('toast').hidden = true; });
   await page.screenshot({ path: 'test-results/dashboard-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

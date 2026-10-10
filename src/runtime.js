@@ -508,17 +508,24 @@ export class Runtime extends EventEmitter {
           });
           const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
           return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: Date.now(),
-            extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, party: c.party ? { leader: c.party, members } : null } };
+            extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, look: { skin: c.skin, cx: c.cx }, party: c.party ? { leader: c.party, members } : null } };
         }));
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
         const { extras, ...state } = session.state;
         const previous = session.previousState;
-        session.state = { ...state, ...extrasView(extras), observedAt: new Date().toISOString() };
+        const { look, ...view } = extrasView(extras);
+        session.state = { ...state, ...view, observedAt: new Date().toISOString() };
         this.emit('state', session.id, session.state);
+        await this.rememberLook(session, look);
         await this.observe(session, previous);
       } catch (error) { session.state = null; this.failed(session, error); }
     }
     for (const session of this.sessions.values()) await this.updateAlerts(session);
+  }
+  // The last seen look stays saved, so the dashboard draws the character's sprite while it is offline too.
+  async rememberLook(session, look) {
+    if (!look || JSON.stringify(this.store.snapshot().looks?.[session.id]) === JSON.stringify(look)) return;
+    await this.store.update(state => { if (state.characters.some(c => c.id === session.id)) state.looks[session.id] = look; });
   }
   // Feeds the XP/gold history and frozen-CODE detection; reloads CODE of an idle character when enabled.
   async observe(session, previous) {

@@ -172,6 +172,22 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     const body = await gameData.sheet(req.params.name);
     res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=86400' }).send(body);
   });
+  app.get('/api/sprite-sheets/:name', async (req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    const body = await gameData.spriteSheet(req.params.name);
+    res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=86400' }).send(body);
+  });
+  // Layers of a character sprite for a look (skin plus cx as place:id pairs), or the default look of a class.
+  app.get('/api/character-sprites', async (req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    const query = z.object({
+      skin: z.string().regex(/^[a-zA-Z0-9_]{1,40}$/).optional(), cx: z.string().regex(/^([a-z]{1,16}:[a-zA-Z0-9_]{1,40})(,[a-z]{1,16}:[a-zA-Z0-9_]{1,40}){0,15}$/).optional(),
+      class: z.string().regex(/^[a-z]{1,24}$/).optional(),
+    }).strict().parse(req.query);
+    const cx = Object.fromEntries((query.cx ? query.cx.split(',') : []).map(pair => pair.split(':')));
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.json(await gameData.characterSprite({ skin: query.skin, cx, ctype: query.class }));
+  });
   const itemNames = async () => gameData ? gameData.itemNames() : {};
   // A running character is read live; any other owned character comes from the saved account snapshot.
   app.get('/api/inventories/:name', async (req, res) => {
@@ -212,7 +228,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   // A panel with a live WebSocket receives logs there and asks for the dashboard without them (?logs=0).
   app.get('/api/dashboard', (req, res) => res.json({
-    characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
+    characters: store.snapshot().characters, looks: store.snapshot().looks, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
     sessions: runtime.snapshot(), logs: req.query.logs === '0' ? undefined : runtime.logs,
     config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters, notifications: runtime.notifier?.status() || { discord: false, telegram: false } },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
@@ -308,7 +324,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.delete('/api/characters/:id', async (req, res) => {
     await runtime.exclusive(async () => {
       await runtime.stopInternal(req.params.id); runtime.forget(req.params.id);
-      await store.update(state => { state.characters = state.characters.filter(c => c.id !== req.params.id); });
+      await store.update(state => { state.characters = state.characters.filter(c => c.id !== req.params.id); delete state.looks[req.params.id]; });
     }); res.json({ ok: true });
   });
   app.post('/api/characters/:id/:action', async (req, res) => {
