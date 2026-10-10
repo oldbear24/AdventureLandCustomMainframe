@@ -10,6 +10,7 @@ import { Runtime, GAME_ORIGIN } from '../src/runtime.js';
 import { createApp } from '../src/app.js';
 import { configFromEnv } from '../src/config.js';
 import { GameAccount } from '../src/game-account.js';
+import { GameApi } from '../src/game-api.js';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-browser-'));
 const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', DATA_DIR: directory });
@@ -28,12 +29,12 @@ const browserType = {
         navigations.push(url.pathname);
         assert.match(route.request().headers().cookie || '', /auth=fixture-user-fixture-auth-secret/);
         const body = url.pathname.startsWith('/server/') ? `<script>window.user_id=${JSON.stringify(accountValid ? 'fixture-user' : '')}; window.X={characters:${JSON.stringify(owned ? [{ name: 'TestWarrior', online: alreadyOnline }] : [])},servers:[{region:'EU',name:'I'}]};</script>` : url.pathname.startsWith('/character/') ? `<!doctype html><body><script>
-          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,map:'main',x:20,y:40};
+          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],map:'main',x:20,y:40};window.sentTransfers=[];
           window.socket={connected:true};window.code_run=false;window.code_active=false;
           window.add_log=()=>{};window.add_codelog=()=>{};
           window.stop_runner=()=>{document.querySelector('#maincode')?.remove();window.code_run=window.code_active=false};
           window.start_runner=(id,source)=>{window.the_code=source;window.code_run=true;const f=document.createElement('iframe');f.id=id;f.src='/runner';document.body.appendChild(f)};
-        </script>` : url.pathname === '/runner' ? `<!doctype html><body><script>parent.code_active=true;window.character=parent.character;window.game_log=parent.add_codelog;const s=document.createElement('script');s.textContent=parent.the_code;document.body.appendChild(s);</script>` : '<!doctype html><body>fixture</body>';
+        </script>` : url.pathname === '/runner' ? `<!doctype html><body><script>parent.code_active=true;window.character=parent.character;window.game_log=parent.add_codelog;window.send_gold=async(name,gold)=>{parent.sentTransfers.push({name,gold});character.gold-=gold;return {response:'gold_sent',name,gold}};window.send_item=async(name,num,q)=>{const item=character.items[num];parent.sentTransfers.push({name,num,q});item.q-=q;return {response:'item_sent',name,num,q,item:item.name}};const s=document.createElement('script');s.textContent=parent.the_code;document.body.appendChild(s);</script>` : '<!doctype html><body>fixture</body>';
         await route.fulfill({ contentType: 'text/html', body });
       });
       return context;
@@ -48,13 +49,19 @@ const account = new GameAccount(config, runtime, async (url, options) => {
   if (JSON.parse(options.body).password !== 'fixture-game-password') return new Response(JSON.stringify({ failed: true, reason: 'wrong_password' }), { status: 401 });
   return new Response(JSON.stringify({ success: true, user: 'fixture-user', auth: 'fixture-auth-secret' }), { status: 200 });
 }); await account.init();
-const app = createApp(config, store, runtime, account);
+const gameApi = new GameApi(config, async (url, options) => {
+  assert.equal(url, `${GAME_ORIGIN}/mcp_api/mainframe_list_characters`);
+  assert.equal(JSON.parse(options.body).token, `mcp_${'a'.repeat(43)}`);
+  return Response.json({ success: true, characters: [{ character: 'TestWarrior', level: 42, class: 'warrior', profile: { online: false } }] });
+}); await gameApi.init();
+const app = createApp(config, store, runtime, account, gameApi);
 const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `http://127.0.0.1:${server.address().port}`;
 let uiBrowser;
 try {
   uiBrowser = await chromium.launch({ headless: true });
   const page = await uiBrowser.newPage({ viewport: { width: 1440, height: 1100 } });
+  page.setDefaultTimeout(15_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error' && /Content Security Policy|Refused to/.test(message.text())) errors.push(message.text()); });
@@ -75,12 +82,19 @@ try {
   await page.locator('#account-dialog').waitFor({ state: 'hidden' });
   assert.match(await page.locator('#account-status').textContent(), /fixture@example.com/);
   assert.equal(await page.locator('#game-password').inputValue(), '');
+  await page.locator('#manage-account').click();
+  await page.locator('summary').filter({ hasText: 'API token' }).click();
+  await page.locator('#api-token').fill(`mcp_${'a'.repeat(43)}`);
+  await page.locator('#api-token-form button').click();
+  await page.locator('#account-dialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('#api-token').inputValue(), '');
+  assert.match(await page.locator('#owned-characters').textContent(), /TestWarrior/);
   await page.locator('#script-name').fill('Fixture warrior');
   await page.locator('#script-source').fill('game_log("fixture CODE ready"); console.log("browser bridge verified");');
   await page.locator('#save-script').click();
   await page.waitForFunction(() => document.querySelector('#script-picker').options.length === 2);
-  await page.locator('#add-character').click();
-  await page.locator('#character-name').fill('TestWarrior');
+  await page.locator('[data-owned-index="0"]').click();
+  assert.equal(await page.locator('#character-name').inputValue(), 'TestWarrior');
   await page.locator('#character-script').selectOption({ label: 'Fixture warrior' });
   await page.locator('#character-form button[type=submit]').click();
   await page.locator('.character-card').waitFor();
@@ -92,6 +106,34 @@ try {
   assert.ok(runtime.logs.some(l => l.message.includes('fixture CODE ready')));
   await page.reload(); await page.locator('#panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('#stat-gold').textContent !== '—');
+  await page.locator('#load-owned').click();
+  await page.waitForFunction(() => document.querySelector('[data-owned-index]'));
+  const gamePage = runtime.sessions.values().next().value.page;
+  await page.locator('[data-action=transfer]').click();
+  await page.locator('#transfer-to').fill('Receiver'); await page.locator('#transfer-amount').fill('200');
+  await page.locator('#transfer-form button').click(); await page.locator('#transfer-review').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#transfer-summary').textContent(), /TestWarrior → Receiver: 200 G/);
+  assert.equal(await gamePage.evaluate(() => window.sentTransfers.length), 0);
+  await page.locator('#confirm-transfer').click();
+  await page.waitForFunction(() => document.getElementById('transfer-result').textContent.includes('potvrdil'));
+  assert.equal(await gamePage.evaluate(() => window.sentTransfers.length), 1);
+  await page.locator('#close-transfer').click();
+  await page.locator('[data-action=transfer]').click();
+  await page.locator('#transfer-to').fill('Receiver'); await page.locator('#transfer-type').selectOption('item');
+  assert.equal(await page.locator('#transfer-item option').count(), 1); // Locked sword is excluded.
+  await page.locator('#transfer-quantity').fill('3'); await page.locator('#transfer-form button').click();
+  await page.locator('#transfer-review').waitFor({ state: 'visible' }); await page.locator('#confirm-transfer').click();
+  await page.waitForFunction(() => document.getElementById('transfer-result').textContent.includes('potvrdil'));
+  assert.equal(await gamePage.evaluate(() => window.character.items[0].q), 7);
+  await page.locator('#close-transfer').click();
+  await page.locator('[data-action=transfer]').click();
+  await page.locator('#transfer-to').fill('Receiver'); await page.locator('#transfer-type').selectOption('item');
+  await page.locator('#transfer-form button').click(); await page.locator('#transfer-review').waitFor({ state: 'visible' });
+  await gamePage.evaluate(() => { window.character.items[0].q = 6; });
+  await page.locator('#confirm-transfer').click();
+  await page.waitForFunction(() => document.getElementById('transfer-result').textContent.includes('Inventář se změnil'));
+  assert.equal(await gamePage.evaluate(() => window.sentTransfers.length), 2);
+  await page.locator('#close-transfer').click();
   assert.equal(await page.locator('.meter i').first().evaluate(element => Math.round(element.getBoundingClientRect().width / element.parentElement.getBoundingClientRect().width * 100)), 80);
   const scriptId = store.snapshot().scripts[0].id;
   await page.locator('#script-picker').selectOption(scriptId);
@@ -109,6 +151,10 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: 'test-results/dashboard-mobile.png', fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.locator('[data-action=transfer]').click();
+  await page.screenshot({ path: 'test-results/transfer-mobile.png', fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.locator('#close-transfer').click();
   // A socket loss retries a completely new authenticated game context.
   const id = store.snapshot().characters[0].id;
   await runtime.sessions.get(id).page.evaluate(() => { window.socket.connected = false; });
@@ -135,7 +181,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel and game account login/logout, encrypted credentials, UI edit/save/reload, desktop/mobile layout, real Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, encrypted API token, owned character import, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

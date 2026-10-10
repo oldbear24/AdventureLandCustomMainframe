@@ -4,13 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { characterSchema, scriptSchema } from './store.js';
+import { Transfers, inventoryView, transferSchema } from './transfers.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-export function createApp(config, store, runtime, account = null) {
+export function createApp(config, store, runtime, account = null, gameApi = null) {
   const app = express(); app.disable('x-powered-by');
+  const transfers = new Transfers(runtime);
   const sessions = new Map(), attempts = new Map(), gameAttempts = new Map();
   const salt = randomBytes(32), passwordHash = scryptSync(config.password, salt, 64);
   const usernameHash = createHash('sha256').update(config.username).digest();
@@ -71,7 +73,7 @@ export function createApp(config, store, runtime, account = null) {
     next();
   });
   app.use('/api/account', (req, res, next) => {
-    if (req.method !== 'POST' || !['/login', '/cookie'].includes(req.path)) return next();
+    if (req.method !== 'POST' || !['/login', '/cookie', '/token'].includes(req.path)) return next();
     const current = gameAttempts.get(req.ip);
     const counter = current && current.until > Date.now() ? current : { count: 0, until: Date.now() + 15 * 60 * 1000 };
     if (counter.count >= 10) return res.status(429).json({ error: 'Příliš mnoho přihlášení ke hře. Zkus to za 15 minut.' });
@@ -86,11 +88,31 @@ export function createApp(config, store, runtime, account = null) {
     res.json(await account.setCookie(cookie));
   });
   app.post('/api/account/disconnect', async (_req, res) => res.json(await account.disconnect(store)));
+  app.post('/api/account/token', async (req, res) => {
+    if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+    const { token } = z.object({ token: z.string().regex(/^mcp_[A-Za-z0-9_-]{43}$/) }).strict().parse(req.body);
+    res.json(await gameApi.connect(token));
+  });
+  app.post('/api/account/token/disconnect', async (_req, res) => {
+    if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+    res.json(await gameApi.disconnect());
+  });
+  app.get('/api/owned-characters', async (_req, res) => {
+    if (!gameApi) throw new HttpError(503, 'API připojení není dostupné.');
+    res.json(await gameApi.characters());
+  });
+  app.get('/api/characters/:id/inventory', async (req, res) => res.json(await runtime.exclusive(async () => inventoryView(await runtime.inventory(req.params.id)))));
+  app.post('/api/transfers/prepare', async (req, res) => res.json(await transfers.prepare(transferSchema.parse(req.body), sessionFor(req).token)));
+  app.post('/api/transfers/:id/confirm', async (req, res) => {
+    z.object({}).strict().parse(req.body);
+    res.json(await transfers.confirm(z.uuid().parse(req.params.id), sessionFor(req).token));
+  });
   app.get('/api/dashboard', (_req, res) => res.json({
     characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
     sessions: runtime.snapshot(), logs: runtime.logs.slice(-150),
     config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
+    gameApi: gameApi?.status() || { configured: false },
     uptime: Math.floor(process.uptime()),
   }));
   app.post('/api/characters', async (req, res) => {

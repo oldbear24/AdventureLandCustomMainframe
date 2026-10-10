@@ -1,13 +1,15 @@
 const $ = id => document.getElementById(id);
 let dashboard = null, selectedScript = '', dirty = false, polling = false, active = false;
 const pending = new Set();
+let ownedCharacters = [], transferInventory = null, transferCharacterId = '', transferQuote = null;
+function clearCredentials() { for (const id of ['game-password', 'game-cookie', 'api-token']) $(id).value = ''; }
 const number = value => new Intl.NumberFormat('cs-CZ').format(Math.round(Number(value) || 0));
 const escape = text => String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 async function api(url, method = 'GET', body) {
   const response = await fetch(`/api${url}`, { method, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; $('account-dialog').close(); $('game-password').value = ''; $('game-cookie').value = ''; }
+    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; }
     throw new Error(data.error + (data.issues ? ` ${data.issues.map(i => `${i.field}: ${i.message}`).join(', ')}` : ''));
   }
   return data;
@@ -32,13 +34,16 @@ function render() {
   $('account-dialog-status').textContent = accountText;
   $('manage-account').textContent = account?.configured ? 'Spravovat účet' : 'Připojit účet';
   $('disconnect-account').hidden = !account?.configured;
+  $('api-status').textContent = dashboard.gameApi?.configured ? 'API token je připojen. Seznam načti tlačítkem.' : 'Připoj API token v dialogu Herní účet.';
+  $('load-owned').disabled = !dashboard.gameApi?.configured;
+  $('disconnect-token').hidden = !dashboard.gameApi?.configured;
   $('add-character').disabled = dashboard.characters.length >= dashboard.config.maxCharacters;
   $('characters').innerHTML = dashboard.characters.length ? dashboard.characters.map(c => {
     const session = sessions.get(c.id), state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
     const labels = { running: state?.rip ? 'DEAD' : 'ONLINE', starting: 'STARTUJI', reconnecting: 'OBNOVUJI', stopped: 'OFFLINE' };
     const percentage = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
     const script = dashboard.scripts.find(s => s.id === c.scriptId);
-    return `<article class="character-card"><div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} / ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}</small></div></div><span class="badge ${status}">${labels[status]}</span></div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div><div class="details"><span>${state ? escape(state.map) : 'Čeká na spuštění'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div><div class="card-script">⌘ ${script ? escape(script.name) : 'Bez skriptu'} ${state ? (state.codeRunning ? ' · CODE běží' : ' · CODE stojí') : ''}${c.autoStart ? ' · autostart' : ''}</div>${session?.error ? `<p class="card-error">${escape(session.error)}</p>` : ''}<div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''}>↻ CODE</button><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Upravit</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div></article>`;
+    return `<article class="character-card"><div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} / ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}</small></div></div><span class="badge ${status}">${labels[status]}</span></div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div><div class="details"><span>${state ? escape(state.map) : 'Čeká na spuštění'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div><div class="card-script">⌘ ${script ? escape(script.name) : 'Bez skriptu'} ${state ? (state.codeRunning ? ' · CODE běží' : ' · CODE stojí') : ''}${c.autoStart ? ' · autostart' : ''}</div>${session?.error ? `<p class="card-error">${escape(session.error)}</p>` : ''}<div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''}>↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Upravit</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div></article>`;
   }).join('') : '<div class="empty"><h2>Tvůj tým začíná tady.</h2><p>Přidej postavu, přiřaď CODE a spusť první relaci.</p></div>';
   $('script-picker').innerHTML = scriptOptions(selectedScript, 'Nový skript');
   const filter = $('log-filter').value;
@@ -66,11 +71,11 @@ $('login-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
-  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; $('account-dialog').close(); $('game-password').value = ''; $('game-cookie').value = ''; selectedScript = ''; dirty = false; }
+  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; dirty = false; }
   catch (error) { toast(error.message, true); }
 });
 function openAccount() {
-  $('game-account-error').textContent = ''; $('game-password').value = ''; $('game-cookie').value = '';
+  $('game-account-error').textContent = ''; clearCredentials();
   $('account-dialog').showModal();
 }
 $('open-account').addEventListener('click', openAccount);
@@ -110,6 +115,7 @@ $('character-form').addEventListener('submit', async event => {
 $('characters').addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]'); if (!button) return;
   const { id, action } = button.dataset;
+  if (action === 'transfer') return openTransfer(id);
   if (action === 'edit') return openCharacter(dashboard.characters.find(c => c.id === id));
   if (action === 'delete' && !confirm('Smazat tuto postavu z panelu?')) return;
   pending.add(id); render();
@@ -146,5 +152,92 @@ $('delete-script').addEventListener('click', async () => {
   try { await api(`/scripts/${selectedScript}`, 'DELETE', {}); newScript(); await refresh(); } catch (error) { toast(error.message, true); }
 });
 $('log-filter').addEventListener('change', renderLogs);
+function renderOwned() {
+  $('owned-characters').innerHTML = ownedCharacters.length ? ownedCharacters.map((c, index) => `<div class="owned-row"><div><strong>${escape(c.name)}</strong><small>${escape(c.class)} · LVL ${number(c.level)}${c.online ? ' · online' : ''}</small></div><button class="ghost" data-owned-index="${index}">Přidat do panelu</button></div>`).join('') : '<p class="muted">API nevrátilo žádné postavy.</p>';
+}
+$('account-dialog').addEventListener('close', clearCredentials);
+$('api-token-form').addEventListener('submit', async event => {
+  event.preventDefault(); event.submitter.disabled = true; $('game-account-error').textContent = '';
+  try {
+    const result = await api('/account/token', 'POST', { token: $('api-token').value.trim() });
+    ownedCharacters = result.characters; renderOwned(); await refresh(); $('account-dialog').close(); toast('API token připojen.');
+  } catch (error) { $('game-account-error').textContent = error.message; }
+  finally { $('api-token').value = ''; event.submitter.disabled = false; }
+});
+$('disconnect-token').addEventListener('click', async () => {
+  $('disconnect-token').disabled = true;
+  try { await api('/account/token/disconnect', 'POST', {}); ownedCharacters = []; $('owned-characters').replaceChildren(); await refresh(); toast('API token odpojen.'); }
+  catch (error) { $('game-account-error').textContent = error.message; }
+  finally { $('disconnect-token').disabled = false; }
+});
+$('load-owned').addEventListener('click', async () => {
+  $('load-owned').disabled = true;
+  try { ownedCharacters = (await api('/owned-characters')).characters; renderOwned(); }
+  catch (error) { toast(error.message, true); }
+  finally { $('load-owned').disabled = !dashboard.gameApi?.configured; }
+});
+$('owned-characters').addEventListener('click', event => {
+  const button = event.target.closest('[data-owned-index]');
+  if (button) openCharacter({ name: ownedCharacters[Number(button.dataset.ownedIndex)].name });
+});
+function invalidateTransfer() { transferQuote = null; $('transfer-review').hidden = true; }
+function transferFields() {
+  const item = $('transfer-type').value === 'item';
+  $('transfer-item-fields').hidden = !item; $('transfer-gold-fields').hidden = item;
+  $('transfer-amount').required = !item; $('transfer-item').required = item; $('transfer-quantity').required = item;
+  $('transfer-amount').disabled = item; $('transfer-item').disabled = !item; $('transfer-quantity').disabled = !item;
+  invalidateTransfer();
+}
+async function openTransfer(id) {
+  try {
+    const inventory = await api(`/characters/${id}/inventory`);
+    transferCharacterId = id; transferInventory = inventory;
+    $('transfer-form').reset(); invalidateTransfer(); $('transfer-error').textContent = ''; $('transfer-result').textContent = '';
+    $('transfer-from').textContent = `${inventory.name} · ${number(inventory.gold)} G`;
+    $('transfer-item').innerHTML = inventory.items.filter(item => !item.locked).map(item => `<option value="${item.index}">${escape(item.name)} +${number(item.level)} · ${number(item.quantity)} ks · slot ${item.index}</option>`).join('');
+    const recipients = new Set([...ownedCharacters.map(c => c.name), ...dashboard.characters.map(c => c.name)]);
+    $('recipient-names').innerHTML = [...recipients].filter(name => name.toLowerCase() !== inventory.name.toLowerCase()).map(name => `<option value="${escape(name)}"></option>`).join('');
+    transferFields(); if (!$('transfer-dialog').open) $('transfer-dialog').showModal();
+  } catch (error) { toast(error.message, true); }
+}
+$('close-transfer').addEventListener('click', () => $('transfer-dialog').close());
+$('reload-transfer').addEventListener('click', async () => {
+  $('reload-transfer').disabled = true;
+  try { await openTransfer(transferCharacterId); } finally { $('reload-transfer').disabled = false; }
+});
+$('transfer-dialog').addEventListener('close', invalidateTransfer);
+$('transfer-form').addEventListener('input', invalidateTransfer);
+$('transfer-type').addEventListener('change', transferFields);
+$('transfer-form').addEventListener('submit', async event => {
+  event.preventDefault(); event.submitter.disabled = true; invalidateTransfer(); $('transfer-error').textContent = ''; $('transfer-result').textContent = '';
+  const body = { characterId: transferCharacterId, type: $('transfer-type').value, to: $('transfer-to').value };
+  if (body.type === 'gold') body.amount = Number($('transfer-amount').value);
+  else {
+    body.index = Number($('transfer-item').value); body.quantity = Number($('transfer-quantity').value);
+    body.fingerprint = transferInventory.items.find(item => item.index === body.index)?.fingerprint || '';
+  }
+  try {
+    const quote = await api('/transfers/prepare', 'POST', body);
+    // Do not show an obsolete confirmation if the form changed during the request.
+    const current = body.type === $('transfer-type').value && body.to === $('transfer-to').value &&
+      (body.type === 'gold' ? body.amount === Number($('transfer-amount').value) : body.index === Number($('transfer-item').value) && body.quantity === Number($('transfer-quantity').value));
+    if (!current || !$('transfer-dialog').open) return;
+    transferQuote = quote;
+    $('transfer-summary').textContent = `${quote.from} → ${quote.to}: ${quote.type === 'gold' ? `${number(quote.amount)} G` : `${number(quote.quantity)}× ${quote.item} +${quote.level}`}. Potvrzení platí 60 sekund.`;
+    $('confirm-transfer').disabled = false; $('transfer-review').hidden = false;
+  } catch (error) { $('transfer-error').textContent = error.message; }
+  finally { event.submitter.disabled = false; }
+});
+$('confirm-transfer').addEventListener('click', async () => {
+  if (!transferQuote) return;
+  const quote = transferQuote; $('confirm-transfer').disabled = true; $('transfer-form').inert = true; $('reload-transfer').disabled = true;
+  try {
+    const result = await api(`/transfers/${quote.id}/confirm`, 'POST', {});
+    $('transfer-result').textContent = result.message + (result.receivedGold !== undefined ? ` Příjemce dostal ${number(result.receivedGold)} G.` : '');
+    $('transfer-result').className = result.status === 'confirmed' ? 'muted' : 'error';
+    invalidateTransfer(); await refresh();
+  } catch (error) { $('transfer-error').textContent = `${error.message} Před dalším převodem zkontroluj herní stav.`; }
+  finally { $('transfer-form').inert = false; $('reload-transfer').disabled = false; }
+});
 window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
 await refresh(true); setInterval(() => { if (active) refresh(); }, 5000);

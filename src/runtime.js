@@ -141,6 +141,54 @@ export class Runtime {
     if (!session || session.status !== 'running') throw new Error('Postava není připojena.');
     await this.loadScript(session);
   }); }
+  async inventory(id) {
+    const session = this.sessions.get(id);
+    if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
+    const snapshot = await withDeadline(session.page.evaluate(() => {
+      const c = window.character;
+      if (!c || !window.socket?.connected || c.rip) return null;
+      return { name: c.name, gold: c.gold, items: (c.items || []).flatMap((item, index) => item ? [{
+        index, name: item.name, level: item.level || 0, quantity: item.q || 1,
+        locked: !!(item.l || item.b || item.acl || item.name === 'placeholder'), serialized: JSON.stringify(item),
+      }] : []) };
+    }));
+    if (!snapshot) throw Object.assign(new Error('Postava je mrtvá nebo se odpojila.'), { status: 409 });
+    return snapshot;
+  }
+  async sendTransfer(command) {
+    const session = this.sessions.get(command.characterId);
+    try {
+      return await withDeadline(session.page.evaluate(async input => {
+        const c = window.character, runner = document.getElementById('maincode')?.contentWindow;
+        const failed = message => ({ status: 'failed', message });
+        if (!c || !window.socket?.connected || c.rip) return failed('Postava je mrtvá nebo odpojená.');
+        if (!window.code_active || !runner || typeof runner.send_gold !== 'function' || typeof runner.send_item !== 'function') return failed('Pro převod musí běžet CODE postavy.');
+        if (c.name.toLowerCase() === input.to.toLowerCase()) return failed('Příjemce musí být jiná postava.');
+        if (input.type === 'gold' && c.gold < input.amount) return failed('Postava už nemá dost zlata.');
+        if (input.type === 'item') {
+          const item = c.items?.[input.index];
+          if (!item || JSON.stringify(item) !== input.expectedItem) return failed('Inventář se změnil. Připrav nový převod.');
+          if (item.l || item.b || item.acl || item.name === 'placeholder') return failed('Předmět je zamčený nebo blokovaný.');
+          if ((item.q || 1) < input.quantity) return failed('Nedostatek předmětů.');
+        }
+        let result;
+        try {
+          result = await (input.type === 'gold' ? runner.send_gold(input.to, input.amount) : runner.send_item(input.to, input.index, input.quantity));
+        } catch (error) {
+          const reasons = { distance: 'Příjemce musí být poblíž na stejné mapě.', receiver_unavailable: 'Příjemce není dostupný na tomto serveru.', send_no_space: 'Příjemce nemá místo v inventáři.', item_locked: 'Předmět je zamčený.', item_blocked: 'Předmět je blokovaný.', cant_in_bank: 'Převod nelze provést v bance.', send_no_item: 'Předmět už není v inventáři.' };
+          if (reasons[error?.reason]) return failed(reasons[error.reason]);
+          return { status: 'unknown', message: 'Výsledek převodu není potvrzen. Zkontroluj inventář a herní logy před dalším pokusem.' };
+        }
+        if (result?.response === (input.type === 'gold' ? 'gold_sent' : 'item_sent') && result.name?.toLowerCase() === input.to.toLowerCase() &&
+          (input.type === 'gold' || (result.item === input.itemName && result.num === input.index && result.q === input.quantity))) {
+          return { status: 'confirmed', message: 'Herní server potvrdil převod.', receivedGold: input.type === 'gold' ? result.gold : undefined };
+        }
+        return { status: 'unknown', message: 'Výsledek převodu není potvrzen. Zkontroluj inventář a herní logy před dalším pokusem.' };
+      }, command), 12_000);
+    } catch {
+      return { status: 'unknown', message: 'Spojení během převodu selhalo nebo vypršelo. Zkontroluj inventář a herní logy před dalším pokusem.' };
+    }
+  }
   failed(session, error) {
     session.status = 'reconnecting'; session.error = String(error.message || error);
     session.attempts += 1;

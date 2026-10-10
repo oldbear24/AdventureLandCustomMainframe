@@ -36,6 +36,8 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - Přihlášení do panelu jménem a heslem; HttpOnly session cookie, omezení pokusů o přihlášení, kontrola Origin a validace vstupů.
 - Přihlášení k Adventure Land e-mailem a heslem přímo z panelu; pro Steam účet také vložení herní cookie. Herní relace se ukládá šifrovaně, herní heslo se neukládá.
 - Přímé HTTPS s vlastním PEM certifikátem a klíčem, nebo provoz za HTTPS proxy.
+- Volitelný API token „Connect an AI“: výpis postav účtu a přidání vybrané postavy do panelu.
+- Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 1 000 záznamů).
 
 Tento projekt nepoužívá placené přiřazení herního Mainframu. Herní relace běží na tvém serveru. Stávající CODE může používat funkce hry jako v prohlížeči; další postavy spravuj přes panel. Pokud skript sám použije `start_character`, vzniknou podřízené herní rámce, které panel samostatně nepočítá. Limit hry stále platí. Projekt neposkytuje vlastní herní server ani další účty.
@@ -149,6 +151,27 @@ Bez přiřazeného skriptu se postava připojí a zůstane bez aktivního CODE. 
 
 **Odhlásit se** odhlásí pouze panel; postavy dál běží. **Odpojit účet a zastavit postavy** v dialogu herního účtu zastaví místní postavy, vypne jejich autostart a odstraní místní herní relaci. Nemění heslo ani neodhlašuje jiné herní klienty. Před změnou herního účtu zastav aktivní postavy.
 
+## API token a seznam postav
+
+V Adventure Land otevři Mainframe → **Connect an AI** → vytvoř nebo zobraz token. V našem panelu otevři **Herní účet** → **API token — Connect an AI / MCP** a vlož ho tam. Token neposílej do chatu ani do veřejného repozitáře. Při připojení ho server ověří přes oficiální JSON API a načte seznam postav. Tlačítko **Načíst seznam** obnovuje seznam ručně; nepoužívá rychlé opakované dotazování API.
+
+U postavy zvol **Přidat do panelu**, nastav region, server a svůj skript. Načtení seznamu samo žádnou postavu nespouští. Token a herní přihlášení jsou nezávislé: token slouží pro výpis, herní relace pro vlastní běh postav. Vlastnictví se před spuštěním ověřuje také vůči herní relaci, takže token jiného účtu nedovolí spustit jeho postavu přes tuto relaci.
+
+API token se ukládá šifrovaně do `api-token.enc.json` s klíčem `api-token.key` (práva 600). V API odpovědích, frontendovém stavu ani logu není jeho hodnota; panel ho po odeslání smaže z formuláře. Pro zálohu obnovuj oba soubory společně. **Odpojit API token** odstraní místní token, ale nezastavuje postavy ani neodvolává token ve hře. Odvolání proveď v Adventure Land. Používá se pouze `mainframe_list_characters` na `https://adventure.land/mcp_api/`; integrace nevolá placené spuštění oficiálního Mainframu.
+
+## Posílání zlata a předmětů
+
+1. Spusť postavu s běžícím CODE. Na kartě zvol **Poslat**.
+2. Vyplň přesné jméno příjemce. Musí být poblíž na stejné mapě a herním serveru. Panel postavy kvůli převodu automaticky nepřesouvá.
+3. Zvol zlato a částku, nebo aktuální položku inventáře a počet. Zamčené, blokované a omezené předměty se nenabízejí.
+4. Zvol **Připravit převod**. Zkontroluj odesílatele, příjemce, částku nebo předmět a počet, pak zvol **Potvrdit a odeslat**. Náhled platí 60 sekund a patří aktuálnímu přihlášení do panelu.
+
+Příprava nic neodesílá. Před odesláním se znovu kontroluje herní spojení, zlato a přesná položka v inventáři; změna položky převod zastaví. Převod používá veřejné CODE funkce `send_gold` a `send_item` v místním herním klientu. Samotný API token pro převod nestačí. Výsledné množství zlata může hra snížit podle svých pravidel; panel zobrazuje částku potvrzenou serverem.
+
+Opakované potvrzení stejného náhledu provede nejvýše jeden pokus během života procesu; záznam výsledku se drží nejméně deset minut. Po restartu staré náhledy přestanou platit. Při výpadku nebo chybějícím potvrzení panel označí výsledek jako **nepotvrzený** a převod automaticky neopakuje. Před novým převodem zkontroluj herní inventář a logy. Nepoužívej současně vlastní převodní smyčku bota a ruční převody: herní odpovědi pro tyto funkce sdílejí jednu frontu a herní server neumožňuje atomické porovnání položky s náhledem. Změny stavu ve hře se řídí jejími pravidly.
+
+Podklady integrace: [oficiální JSON API a MCP](https://github.com/kaansoral/adventureland_mongodb/blob/master/mcp_api.js) a [veřejné CODE funkce](https://github.com/kaansoral/adventureland_mongodb/blob/master/js/runner_functions.js).
+
 ## Provoz a záloha
 
 ```bash
@@ -184,7 +207,7 @@ Na Linuxu mimo Docker může být potřeba `npx playwright install --with-deps c
 
 ## Ověření a hranice
 
-Testy ověřují přihlášení do panelu i herního účtu, šifrování relace, přístup k API, skutečné HTTPS s testovacím certifikátem, Secure cookie, kontrolu jména certifikátu, ukládání, lifecycle runtime a obnovu po výpadku. Samostatný `npm run test:browser` ověřuje panel i browser bridge v reálném Chromium s lokální napodobeninou herního klientu. GitHub Actions také ověřuje HTTP i HTTPS přímo v sestaveném Docker image. Bez tvých herních přihlašovacích údajů nebylo ověřeno živé přihlášení k Adventure Land.
+Testy ověřují přihlášení do panelu i herního účtu, šifrování relace a API tokenu, seznam a import postav, náhledy převodů, ochranu proti opakovanému odeslání, změnu inventáře, přístup k API, skutečné HTTPS s testovacím certifikátem, Secure cookie, kontrolu jména certifikátu, ukládání, lifecycle runtime a obnovu po výpadku. Samostatný `npm run test:browser` ověřuje panel i browser bridge v reálném Chromium s lokální napodobeninou herního klientu včetně převodu zlata a předmětů. GitHub Actions také ověřuje HTTP i HTTPS přímo v sestaveném Docker image. Bez tvých herních přihlašovacích údajů nebylo ověřeno živé přihlášení, API token ani skutečný herní převod.
 
 Runtime načítá aktuální klient ze hry, takže změna jejích přihlašovacích nebo CODE funkcí může vyžadovat úpravu adaptéru `src/runtime.js`. Kontrola online stavu omezuje duplicitní spuštění, ale souběžné přihlášení z jiného klientu mezi kontrolou a připojením není možné z tohoto panelu atomicky zablokovat. Jedno Chromium sdílí proces browseru; postavy mají oddělené contexty, nikoli samostatné kontejnery. Logy se nedrží po restartu a nejde o systém pro provoz více nezávislých zákaznických účtů.
 
