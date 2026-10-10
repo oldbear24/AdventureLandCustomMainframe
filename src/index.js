@@ -8,6 +8,8 @@ import { GameApi } from './game-api.js';
 import { GameData } from './game-data.js';
 import { Notifier } from './notifier.js';
 import { attachLive } from './live.js';
+import { History } from './history.js';
+import { SystemMonitor } from './system.js';
 
 const config = configFromEnv();
 for (const warning of config.warnings) console.warn(warning);
@@ -15,8 +17,10 @@ const store = new Store(config.dataDir); await store.init();
 const gameApi = new GameApi(config); await gameApi.init();
 const runtime = new Runtime(config, store, undefined, gameApi);
 runtime.notifier = new Notifier(config.notifications, fetch, message => runtime.log(null, 'error', message));
+runtime.history = new History(config.dataDir, message => runtime.log(null, 'error', message)); await runtime.history.init();
 const account = new GameAccount(config, runtime); await account.init();
-const app = createApp(config, store, runtime, account, gameApi, new GameData());
+const system = new SystemMonitor(config, runtime); system.start();
+const app = createApp(config, store, runtime, account, gameApi, new GameData(), system);
 const server = await createWebServer(config, app);
 const live = attachLive(server, app, runtime);
 server.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: https://${config.host}:${config.port}`));
@@ -25,9 +29,9 @@ let stopping = false;
 async function shutdown() {
   if (stopping) return; stopping = true;
   const timeout = setTimeout(() => process.exit(1), 20_000); timeout.unref();
-  app.locals.dispose(); live.close();
+  app.locals.dispose(); live.close(); system.stop();
   const closed = new Promise(resolve => server.close(resolve));
-  await runtime.close(); await closed; clearTimeout(timeout);
+  await runtime.close(); await runtime.history.close().catch(error => console.error(error.message)); await closed; clearTimeout(timeout);
 }
 process.on('SIGTERM', () => shutdown().catch(() => process.exit(1)));
 process.on('SIGINT', () => shutdown().catch(() => process.exit(1)));

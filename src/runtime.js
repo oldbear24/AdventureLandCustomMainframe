@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { createHash, randomUUID } from 'node:crypto';
 import { NOTIFY_COOLDOWN, addSample, alertsFor, extrasView, isActivity, summarizeStats } from './telemetry.js';
 import { EventEmitter } from 'node:events';
+import { eventTransitions, serverEventsView } from './server-events.js';
 
 export const GAME_ORIGIN = 'https://adventure.land';
 export const LOG_LIMIT = 200;
@@ -197,6 +198,13 @@ export class Runtime extends EventEmitter {
     this.browser = null; this.sessions = new Map(); this.logs = [];
     this.queue = Promise.resolve(); this.closing = false; this.sequence = 0;
     this.timer = null; this.notifier = null; this.stats = new Map();
+    // Optional persistent journal and long-term samples (History); server events per realm ("EU I").
+    this.history = null; this.servers = new Map();
+  }
+  // Adds a structured entry to the persistent journal; the character's name is kept for when it is deleted.
+  journal(id, type, message, extra = {}) {
+    const name = id ? this.sessions.get(id)?.character?.name || this.store.snapshot().characters.find(c => c.id === id)?.name || null : null;
+    this.history?.record({ type, characterId: id, name, message: this.redact(message), ...extra });
   }
   log(id, level, message) {
     const text = this.redact(message);
@@ -260,6 +268,7 @@ export class Runtime extends EventEmitter {
     if (prefetched) this.log(id, 'info', `CODE stažen ze slotu ${prefetched.remoteSlot} (verze ${prefetched.remoteVersion}): ${prefetched.name}`);
     const session = { id, character, scriptId, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null, prefetched };
     this.sessions.set(id, session);
+    this.journal(id, 'start', `Spuštěno na ${character.region} ${character.server}.`);
     try { await this.connect(session); }
     catch (error) { this.failed(session, error); }
   }
@@ -351,9 +360,11 @@ export class Runtime extends EventEmitter {
       }, interval);
     }, LIVE_INTERVAL));
     await this.loadScript(session, prefetched);
+    const attempts = session.attempts;
     const saved = this.store.snapshot().characters.find(c => c.id === session.id)?.controls || {};
     session.pendingControls = Object.keys(saved).length ? { values: { ...saved }, until: Date.now() + 60_000 } : null;
     session.status = 'running'; session.error = null; session.attempts = 0; session.lastActivityAt = Date.now();
+    this.journal(session.id, 'connected', attempts ? `Znovu připojeno po ${attempts} ${attempts === 1 ? 'výpadku' : 'neúspěšných pokusech'} (${session.character.region} ${session.character.server}).` : `Připojeno (${session.character.region} ${session.character.server}).`);
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
   }
   // The script a session runs: the assigned one, or with automatic CODE the character's current default slot.
@@ -416,7 +427,9 @@ export class Runtime extends EventEmitter {
       if (source) window.start_runner('maincode', source);
     }, script?.source || ''));
     if (script?.source) await session.page.waitForFunction(() => window.code_active === true, null, { timeout: 15_000 });
+    const changed = session.code?.version !== script?.remoteVersion || session.code?.slot !== script?.remoteSlot || session.code?.error;
     session.codeHash = script ? createHash('sha256').update(script.source).digest('hex') : null;
+    if (script && changed) this.journal(session.id, 'code', `CODE ${script.name} (slot ${script.remoteSlot}, verze ${script.remoteVersion}) načten.`);
     session.code = script ? { slot: script.remoteSlot, version: script.remoteVersion, syncedAt: new Date().toISOString(), error: null } : null;
     this.log(session.id, 'info', script ? `CODE: ${script.name}` : 'Postava připojena bez CODE.');
     // Remember the versions of modules loaded at start; a failed check is retried by the next sync.
@@ -454,7 +467,7 @@ export class Runtime extends EventEmitter {
     try { await withDeadline(session.page.evaluate(() => { if (window.code_run) window.stop_runner(); }), 5000); }
     catch { await withDeadline(session.context?.close() || Promise.resolve(), 5000).catch(() => {}); this.failed(session, new Error(message)); }
     session.codeHash = null;
-    if (session.code?.error !== message) this.log(session.id, 'error', message);
+    if (session.code?.error !== message) { this.log(session.id, 'error', message); this.journal(session.id, 'code_error', message); }
     session.code = { ...session.code, error: message };
   }
   async applySharedScript(script) {
@@ -657,6 +670,8 @@ export class Runtime extends EventEmitter {
     session.attempts += 1;
     session.nextRetry = Date.now() + Math.min(300_000, 10_000 * 2 ** Math.min(session.attempts - 1, 5));
     this.log(session.id, 'error', `${session.error}; další pokus za ${Math.round((session.nextRetry - Date.now()) / 1000)} s.`);
+    // The first failure and then about one an hour at the longest retry delay, so a long outage does not flood the journal.
+    if (session.attempts === 1 || session.attempts % 12 === 0) this.journal(session.id, 'disconnected', `${session.attempts > 1 ? `${session.attempts}. pokus: ` : ''}${session.error}`);
   }
   async tick() {
     if (this.closing) return;
@@ -697,13 +712,20 @@ export class Runtime extends EventEmitter {
           });
           const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
           return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now,
+            // Server-wide events and bosses with their game names; sanitized by serverEventsView.
+            // A value that cannot be copied must not fail the whole reading of the character.
+            server: (() => {
+              try { return { S: window.S && typeof window.S === 'object' ? JSON.parse(JSON.stringify(window.S)) : null, titles: Object.fromEntries(Object.keys(window.S && typeof window.S === 'object' ? window.S : {}).slice(0, 80).map(key => [key, G.events?.[key]?.name || G.monsters?.[key]?.name || null])) }; }
+              catch { return null; }
+            })(),
             extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, look: { skin: c.skin, cx: c.cx }, party: c.party ? { leader: c.party, members } : null } };
         }));
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
-        const { extras, ...state } = session.state;
+        const { extras, server, ...state } = session.state;
         const previous = session.previousState;
         const { look, ...view } = extrasView(extras);
         session.state = { ...state, ...view, observedAt: new Date().toISOString() };
+        session.server = serverEventsView(server);
         this.emit('state', session.id, session.state);
         await this.rememberLook(session, look).catch(error => this.log(session.id, 'error', `Vzhled postavy se nepodařilo uložit: ${this.redact(error.message)}`));
         await this.observe(session, previous);
@@ -714,18 +736,46 @@ export class Runtime extends EventEmitter {
       if (session.status !== 'running' || !session.pendingControls) continue;
       await this.applySavedControls(session).catch(error => this.log(session.id, 'error', `Automatizace: ${this.redact(error.message)}`));
     }
+    this.updateServers();
   }
   // The last seen look stays saved, so the dashboard draws the character's sprite while it is offline too.
   async rememberLook(session, look) {
     if (!look || JSON.stringify(this.store.state.looks?.[session.id]) === JSON.stringify(look)) return;
     await this.store.update(state => { if (state.characters.some(c => c.id === session.id)) state.looks[session.id] = look; });
   }
+  // One reading per realm, from the first running character there, so two clients cannot disagree about one boss.
+  updateServers() {
+    const seen = new Set(), now = Date.now();
+    let notify = null;
+    for (const session of this.sessions.values()) {
+      if (session.status !== 'running' || !session.server || !session.character) continue;
+      const realm = `${session.character.region} ${session.character.server}`;
+      if (seen.has(realm)) continue;
+      seen.add(realm);
+      const previous = this.servers.get(realm), next = { realm, region: session.character.region, server: session.character.server, via: session.character.name, observedAt: now, ...session.server };
+      this.servers.set(realm, next);
+      if (!previous) continue;
+      for (const change of eventTransitions(previous, next)) {
+        const { event } = change, boss = event.kind === 'boss';
+        const message = change.change === 'start' ? (boss ? `${change.title} je tady${event.map ? ` (mapa ${event.map})` : ''}.` : `Začala událost ${change.title}.`) : (boss ? `${change.title} zmizel nebo byl poražen.` : `Událost ${change.title} skončila.`);
+        this.history?.record({ type: 'event', message: `${realm}: ${message}`, realm });
+        notify ??= new Set(this.store.snapshot().settings?.notifyEvents || []);
+        if (change.change === 'start' && notify.has(change.key)) this.notifier?.send(`${boss ? '🐉' : '🎉'} ${realm}: ${message}`).catch(() => {});
+      }
+    }
+    // A realm without a running character has no current reading.
+    for (const realm of [...this.servers.keys()]) if (!seen.has(realm)) this.servers.delete(realm);
+  }
+  serverEvents() { return [...this.servers.values()].sort((a, b) => a.realm.localeCompare(b.realm)); }
   // Feeds the XP/gold history and frozen-CODE detection; reloads CODE of an idle character when enabled.
   async observe(session, previous) {
     const now = Date.now(), state = session.state;
     session.previousState = state;
     if (!this.stats.has(session.id)) this.stats.set(session.id, []);
     addSample(this.stats.get(session.id), state, now);
+    this.history?.sample(session.id, session.character.name, state);
+    if (previous && !previous.rip && state.rip) this.journal(session.id, 'death', `Postava zemřela${state.map ? ` (mapa ${state.map})` : ''}.`);
+    if (previous && state.level > previous.level) this.journal(session.id, 'level', `Dosažen level ${state.level}.`);
     if (!previous || isActivity(previous, state)) session.lastActivityAt = now;
     session.lastActivityAt ??= now;
     const character = session.character;
@@ -745,6 +795,8 @@ export class Runtime extends EventEmitter {
     for (const alert of session.alerts) {
       if (session.activeAlerts?.has(alert.type)) continue;
       this.log(session.id, 'error', `Upozornění: ${alert.message}`);
+      // Deaths and reconnects have their own journal entries.
+      if (!['dead', 'reconnect'].includes(alert.type)) this.journal(session.id, 'alert', alert.message);
       if (now - (session.notified.get(alert.type) || 0) < NOTIFY_COOLDOWN) continue;
       session.notified.set(alert.type, now);
       // Delivery runs in the background so a slow webhook does not hold the runtime queue.
@@ -757,6 +809,7 @@ export class Runtime extends EventEmitter {
   async stopInternal(id) {
     const session = this.sessions.get(id);
     if (!session) return;
+    this.journal(id, 'stop', this.closing ? 'Zastaveno při vypnutí serveru.' : 'Zastaveno.');
     this.sessions.delete(id); this.emit('state', id, null);
     if (session.context) await withDeadline(session.context.close(), 5000).catch(() => {});
     this.log(id, 'info', 'Postava odpojena.');

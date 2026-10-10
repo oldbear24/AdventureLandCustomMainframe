@@ -1,5 +1,6 @@
 import { GAME_ORIGIN } from './runtime.js';
 import { ITEM_STATS } from './inventory.js';
+import { BOSSES, EVENTS } from './server-events.js';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
 export const MAP_NAME = /^[a-zA-Z0-9_]{1,40}$/;
@@ -191,6 +192,35 @@ function itemDetails(G, key, item, titles) {
   };
 }
 
+// Monster stats, base gold, drops and spawn maps for the farming table. Hidden (unlisted) monsters are left out.
+function monsterTable(G, items) {
+  const spawns = new Map();
+  for (const [name, map] of Object.entries(G.maps)) {
+    if (!MAP_NAME.test(name) || !map || map.ignore) continue;
+    for (const zone of Array.isArray(map.monsters) ? map.monsters : []) {
+      if (typeof zone?.type !== 'string') continue;
+      const list = spawns.get(zone.type) || [];
+      const existing = list.find(s => s.map === name);
+      if (existing) existing.count += finite(zone.count) || 0;
+      else list.push({ map: name, title: text(map.name, name), count: finite(zone.count) || 0 });
+      spawns.set(zone.type, list);
+    }
+  }
+  const number = value => Number.isFinite(value) ? value : null;
+  return Object.entries(G.monsters || {}).filter(([key, m]) => MAP_NAME.test(key) && m && typeof m === 'object' && !m.unlist && Number.isFinite(m.hp) && m.hp > 0).map(([key, m]) => {
+    const drops = (Array.isArray(G.drops?.monsters?.[key]) ? G.drops.monsters[key] : [])
+      .filter(d => Array.isArray(d) && Number.isFinite(d[0]) && d[0] > 0 && typeof d[1] === 'string' && ITEM_NAME.test(d[1]))
+      .map(d => ({ chance: d[0], item: d[1], title: items[d[1]]?.name || d[1], icon: items[d[1]]?.icon || null, quantity: Number.isInteger(d[2]) && d[2] > 1 ? d[2] : null }))
+      .sort((a, b) => b.chance - a.chance).slice(0, 20);
+    return {
+      key, name: text(m.name, key), hp: number(m.hp), xp: number(m.xp), gold: number(G.monster_gold?.[key]), attack: number(m.attack),
+      damageType: ['physical', 'magical', 'pure'].includes(m.damage_type) ? m.damage_type : null, frequency: number(m.frequency), speed: number(m.speed), range: number(m.range),
+      armor: number(m.armor) ?? 0, resistance: number(m.resistance) ?? 0, evasion: number(m.evasion) ?? 0, aggro: number(m.aggro), mp: number(m.mp),
+      cooperative: !!m.cooperative, boss: BOSSES.includes(key) || !!m.special, poisonous: !!m.poisonous, spawns: spawns.get(key) || [], drops,
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 // Public game definitions (data.js) give map geometry and item names without any running character.
 export class GameData {
   constructor(request = fetch) {
@@ -214,9 +244,13 @@ export class GameData {
     for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { ...itemDetails(G, key, item, titles), icon: iconOf(G, sheets, key, item) };
     const maps = Object.entries(G.maps).filter(([name, map]) => MAP_NAME.test(name) && map && !map.ignore && (G.geometry[map.key] || G.geometry[name]))
       .map(([name, map]) => ({ name, title: text(map.name, name) })).sort((a, b) => a.title.localeCompare(b.title));
+    // Every boss and event a server can report, for the event notification settings.
+    const eventKeys = new Set([...BOSSES, ...EVENTS, ...Object.keys(G.events || {}).filter(key => /^[a-z0-9_]{1,32}$/.test(key) && !G.events[key]?.disabled && key !== 'dreams')]);
+    const events = [...eventKeys].map(key => ({ key, title: text(G.events?.[key]?.name, text(G.monsters?.[key]?.name, key)), kind: BOSSES.includes(key) ? 'boss' : 'event' }))
+      .sort((a, b) => (a.kind === 'boss' ? 0 : 1) - (b.kind === 'boss' ? 0 : 1) || a.title.localeCompare(b.title));
     const monsters = Object.entries(G.monsters || {}).filter(([key, monster]) => ITEM_NAME.test(key) && monster && typeof monster === 'object')
       .map(([key, monster]) => ({ key, name: text(monster.name, key) }));
-    return { G, items, maps, sheets, monsters, ...spriteIndex(G), version: finite(G.version) };
+    return { G, items, maps, sheets, monsters, events, farming: monsterTable(G, items), ...spriteIndex(G), version: finite(G.version) };
   }
   // Refreshes at most every 6 hours; a failed refresh keeps serving the previous copy.
   async load() {
@@ -283,6 +317,8 @@ export class GameData {
     const data = await this.load();
     return { items: Object.entries(data.items).map(([key, item]) => ({ key, name: item.name })), monsters: data.monsters };
   }
+  async eventCatalog() { return (await this.load()).events; }
+  async monsters() { const data = await this.load(); return { version: data.version, monsters: data.farming }; }
   // Display names are optional: an unreachable data.js must not hide an inventory.
   async itemNames() {
     try { return (await this.load()).items; } catch { return {}; }

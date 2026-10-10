@@ -4,15 +4,19 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { characterSchema, controlKeySchema, controlValueSchema, scriptSchema } from './store.js';
+import { characterSchema, controlKeySchema, controlValueSchema, scriptSchema, settingsSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
-import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
+import { aggregateItems, equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
+import { JOURNAL_TYPES } from './history.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
-const PAGES = { '/': ['overview', ''], '/automation': ['automation', 'Automatizace · '], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '] };
+const PAGES = {
+  '/': ['overview', ''], '/automation': ['automation', 'Automatizace · '], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
+  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/journal': ['journal', 'Deník · '], '/monsters': ['monsters', 'Kde farmit · '], '/system': ['system', 'Systém · '], '/events': ['events', 'Události · '],
+};
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
   const [content, dialogs = ''] = fragment.split('<!-- dialogs -->');
@@ -22,7 +26,7 @@ async function renderPage(page, title) {
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-export function createApp(config, store, runtime, account = null, gameApi = null, gameData = null) {
+export function createApp(config, store, runtime, account = null, gameApi = null, gameData = null, system = null) {
   const app = express(); app.disable('x-powered-by');
   const transfers = new Transfers(runtime);
   const sessions = new Map(), attempts = new Map(), gameAttempts = new Map();
@@ -222,6 +226,11 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     res.set('Cache-Control', 'private, max-age=3600');
     res.json(await gameData.map(req.params.name));
   });
+  app.get('/api/monsters', async (_req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json(await gameData.monsters());
+  });
   app.get('/api/item-sheets/:name', async (req, res) => {
     if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
     const body = await gameData.sheet(req.params.name);
@@ -245,24 +254,21 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   const itemNames = async () => gameData ? gameData.itemNames() : {};
   // A running character is read live; any other owned character comes from the saved account snapshot.
-  app.get('/api/inventories/:name', async (req, res) => {
-    const name = z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).parse(req.params.name);
-    const names = await itemNames();
+  async function characterInventory(name, names) {
     const live = await runtime.exclusive(async () => {
       const session = runtime.sessionByName(name);
       return session ? runtime.details(session.id) : null;
     });
     if (live) {
-      return res.json({ name: live.name, class: String(live.ctype || ''), level: goldOf(live.level), source: 'live', observedAt: new Date().toISOString(), gold: goldOf(live.gold), size: goldOf(live.isize) || live.items.length, items: itemsView(live.items, names), equipment: equipmentView(live.slots, names) });
+      return { name: live.name, class: String(live.ctype || ''), level: goldOf(live.level), source: 'live', observedAt: new Date().toISOString(), gold: goldOf(live.gold), size: goldOf(live.isize) || live.items.length, items: itemsView(live.items, names), equipment: equipmentView(live.slots, names) };
     }
     if (!gameApi?.status().configured) throw new HttpError(409, 'Postava neběží v panelu. Pro uložený inventář připoj API token.');
     const profile = await gameApi.profile(name);
     const items = Array.isArray(profile.inventory) ? profile.inventory : [];
-    res.json({ name: typeof profile.name === 'string' ? profile.name : name, class: typeof profile.class === 'string' ? profile.class : '', level: goldOf(profile.level), source: 'saved', observedAt: typeof profile.synchronized_at === 'string' ? profile.synchronized_at : null, gold: goldOf(profile.gold), size: goldOf(profile.inventory_slots) || items.length, items: itemsView(items, names), equipment: equipmentView(profile.equipment, names) });
-  });
+    return { name: typeof profile.name === 'string' ? profile.name : name, class: typeof profile.class === 'string' ? profile.class : '', level: goldOf(profile.level), source: 'saved', observedAt: typeof profile.synchronized_at === 'string' ? profile.synchronized_at : null, gold: goldOf(profile.gold), size: goldOf(profile.inventory_slots) || items.length, items: itemsView(items, names), equipment: equipmentView(profile.equipment, names) };
+  }
   // The game only sends bank contents to a character standing in the bank; otherwise use the saved snapshot.
-  app.get('/api/bank', async (_req, res) => {
-    const names = await itemNames();
+  async function bankContents(names) {
     const live = await runtime.exclusive(async () => {
       for (const session of runtime.sessions.values()) {
         if (session.status !== 'running' || !session.state?.map?.startsWith('bank')) continue;
@@ -271,10 +277,74 @@ export function createApp(config, store, runtime, account = null, gameApi = null
       }
       return null;
     });
-    if (live) return res.json({ source: 'live', observedAt: new Date().toISOString(), via: live.name, gold: goldOf(live.bank.gold), packs: packsView(live.bank, names) });
+    if (live) return { source: 'live', observedAt: new Date().toISOString(), via: live.name, gold: goldOf(live.bank.gold), packs: packsView(live.bank, names) };
     if (!gameApi?.status().configured) throw new HttpError(409, 'Banka je živě vidět jen s postavou v bance. Pro uložený obsah připoj API token.');
     const bank = await gameApi.bank();
-    res.json({ source: 'saved', observedAt: typeof bank.observed_at === 'string' ? bank.observed_at : null, retrievedAt: typeof bank.retrieved_at === 'string' ? bank.retrieved_at : new Date().toISOString(), via: null, gold: goldOf(bank.gold), packs: packsView(bank.packs, names) });
+    return { source: 'saved', observedAt: typeof bank.observed_at === 'string' ? bank.observed_at : null, retrievedAt: typeof bank.retrieved_at === 'string' ? bank.retrieved_at : new Date().toISOString(), via: null, gold: goldOf(bank.gold), packs: packsView(bank.packs, names) };
+  }
+  app.get('/api/inventories/:name', async (req, res) => {
+    const name = z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).parse(req.params.name);
+    res.json(await characterInventory(name, await itemNames()));
+  });
+  app.get('/api/bank', async (_req, res) => res.json(await bankContents(await itemNames())));
+  // Every item of every character (panel and account) and the bank, grouped; kept for a minute because it costs many API reads.
+  let itemsCache = null, itemsLoading = null;
+  async function collectItems() {
+    const names = await itemNames();
+    const characters = new Map(store.snapshot().characters.map(c => [c.name.toLowerCase(), c.name]));
+    if (gameApi?.status().configured) {
+      const owned = await gameApi.characters().catch(() => ({ characters: [] }));
+      for (const c of owned.characters) if (!characters.has(c.name.toLowerCase())) characters.set(c.name.toLowerCase(), c.name);
+    }
+    const sources = [];
+    const failed = error => error.status && error.status < 500 ? error.message : runtime.redact(error.message || 'Načtení selhalo.');
+    for (const name of [...characters.values()].sort((a, b) => a.localeCompare(b))) {
+      try { sources.push({ kind: 'character', ...await characterInventory(name, names) }); }
+      catch (error) { sources.push({ kind: 'character', name, error: failed(error) }); }
+    }
+    try { sources.push({ kind: 'bank', name: null, ...await bankContents(names) }); }
+    catch (error) { sources.push({ kind: 'bank', name: null, error: failed(error) }); }
+    return { generatedAt: new Date().toISOString(), ...aggregateItems(sources, names) };
+  }
+  app.get('/api/items', async (req, res) => {
+    const age = itemsCache ? Date.now() - itemsCache.at : Infinity;
+    // A manual refresh is honoured at most every 10 seconds.
+    if (age < (req.query.refresh === '1' ? 10_000 : 60_000)) return res.json(itemsCache.body);
+    itemsLoading ||= collectItems().then(body => { itemsCache = { at: Date.now(), body }; return body; }).finally(() => { itemsLoading = null; });
+    res.json(await itemsLoading);
+  });
+  // CPU and memory of the panel, Chromium and the container, the data volume and per-character browser metrics.
+  app.get('/api/system', async (_req, res) => {
+    if (!system) throw new HttpError(503, 'Přehled systému není dostupný.');
+    res.json(await system.report());
+  });
+  // The persistent journal, newest first; after polls for new entries, before pages back.
+  app.get('/api/journal', (req, res) => {
+    const id = z.coerce.number().int().min(0).optional();
+    const query = z.object({
+      types: z.string().max(200).optional().transform(value => value ? value.split(',').filter(Boolean) : null).pipe(z.array(z.enum(JOURNAL_TYPES)).nullable()),
+      character: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(), before: id, after: id, limit: z.coerce.number().int().min(1).max(200).default(100),
+    }).parse(req.query);
+    const result = runtime.history ? runtime.history.query({ types: query.types, characterId: query.character ?? null, before: query.before ?? null, after: query.after ?? null, limit: query.limit }) : { entries: [], more: false };
+    res.json({ ...result, available: !!runtime.history, types: JOURNAL_TYPES });
+  });
+  // Long-term XP/gold stats from the persistent samples. Buckets end at the next whole hour or day of the viewer's time zone.
+  const RANGES = { '24h': [86_400_000, 3_600_000], '3d': [3 * 86_400_000, 6 * 3_600_000], '7d': [7 * 86_400_000, 86_400_000], '14d': [14 * 86_400_000, 86_400_000] };
+  app.get('/api/history/stats', (req, res) => {
+    const { range, offset } = z.object({ range: z.enum(Object.keys(RANGES)).default('24h'), offset: z.coerce.number().int().min(-840).max(840).default(0) }).parse(req.query);
+    const [span, bucket] = RANGES[range], now = Date.now(), shift = offset * 60_000;
+    const to = Math.ceil((now + shift) / bucket) * bucket - shift, from = to - span;
+    res.json({ now, range, from, to, bucketMs: bucket, available: !!runtime.history, characters: runtime.history ? runtime.history.stats(from, to, bucket) : [] });
+  });
+  // Bosses and server events seen by running characters, one reading per realm, and which of them notify.
+  app.get('/api/server-events', async (_req, res) => {
+    const catalog = gameData ? await gameData.eventCatalog().catch(() => []) : [];
+    res.json({ now: Date.now(), realms: runtime.serverEvents(), catalog, notifyEvents: store.snapshot().settings.notifyEvents, notifications: runtime.notifier?.status() || { discord: false, telegram: false } });
+  });
+  app.put('/api/settings/notify-events', async (req, res) => {
+    const { keys } = z.object({ keys: settingsSchema.shape.notifyEvents }).strict().parse(req.body);
+    const saved = await store.update(state => { state.settings = { ...state.settings, notifyEvents: [...new Set(keys)].sort() }; return state.settings.notifyEvents; });
+    res.json({ notifyEvents: saved });
   });
   app.post('/api/transfers/prepare', async (req, res) => res.json(await transfers.prepare(transferSchema.parse(req.body), sessionFor(req).token)));
   app.post('/api/transfers/:id/confirm', async (req, res) => {
@@ -345,6 +415,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
         for (const character of active) await runtime.stopInternal(character.id);
         const ids = new Set(targets.map(c => c.id));
         await store.update(state => { for (const c of state.characters) if (ids.has(c.id)) { c.region = input.region; c.server = input.server; } });
+        for (const character of targets) if (character.region !== input.region || character.server !== input.server) runtime.journal(character.id, 'move', `Přesun z ${character.region} ${character.server} na ${input.region} ${input.server}.`);
         return active;
       });
       for (const character of targets.filter(c => !running.includes(c))) report(character);

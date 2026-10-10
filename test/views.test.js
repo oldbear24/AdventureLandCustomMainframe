@@ -10,10 +10,11 @@ import { createServer } from 'node:http';
 import { WebSocket } from 'ws';
 import { Runtime, STORAGE_VALUE_LIMIT, sanitizeState, storageView } from '../src/runtime.js';
 import { attachLive } from '../src/live.js';
+import { History } from '../src/history.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
 import { createApp } from '../src/app.js';
-import { equipmentView, itemView, packsView } from '../src/inventory.js';
+import { aggregateItems, equipmentView, itemView, packsView } from '../src/inventory.js';
 
 const apiToken = `mcp_${'a'.repeat(43)}`;
 const G = {
@@ -24,7 +25,8 @@ const G = {
     hidden: { key: 'hidden', name: 'Hidden', ignore: true },
   },
   geometry: { main: { min_x: -100, max_x: 200, min_y: -80, max_y: 120, x_lines: [[0, -10, 10], ['bad']], y_lines: [[5, -20, 20]] }, bank: { min_x: 0, max_x: 10, min_y: 0, max_y: 10, x_lines: [], y_lines: [] } },
-  npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo' }, bee: { name: 'Bee' } },
+  npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo', hp: 100, xp: 100, attack: 5, damage_type: 'physical', frequency: 0.4 }, bee: { name: 'Bee', hp: 300, xp: 400, attack: 16, damage_type: 'magical', armor: 10 }, target: { name: 'Target', hp: 1, unlist: true }, broken: { name: 'Broken' } },
+  monster_gold: { goo: 20 }, drops: { monsters: { goo: [[0.001, 'ringsj'], [0.5, 'hpot0', 2], [1, '<b>']] } },
   items: { hpot0: { name: 'Health Potion', type: 'pot', gives: [['hp', 200], ['bad', 1]] }, helmet: { name: 'Helmet', type: 'helmet', tier: 1, stat: 1, armor: 5, resistance: 6, upgrade: { stat: 1, resistance: 0.5, armor: 0.5 }, grades: [7, 9, 10, 12], explanation: 'Protects the head.', secret: 'x' }, firebow: { name: 'Fire Bow', type: 'weapon', wtype: 'bow', tier: 2, damage_type: 'physical', attack: 30, range: 50, attr0: 2, ability: 'burn', upgrade: { attack: 4, range: 5, attr0: 0.25 }, grades: [6, 9, 10, 12] }, ringsj: { name: 'Ring of Strength', type: 'ring', skin: 'ring' }, lost: { name: 'Lost' }, outside: { name: 'Outside' } },
   imagesets: { pack_20: { size: 20, rows: 4, columns: 8, file: '/images/tiles/items/pack_20vt8.png' }, pack_1a: { size: 16, rows: 2, columns: 2, file: '/images/tiles/items/pack_1a.png?v=11' }, evil: { size: 20, rows: 1, columns: 1, file: 'https://example.com/x.png' }, sneaky: { size: 20, rows: 1, columns: 1, file: '/images/../secret.png' } },
   titles: { lucky: { type: 'all_items', luck: 2, title: 'Lucky' } }, sets: {}, skills: {},
@@ -66,6 +68,15 @@ test('game data is reduced to drawable maps and item names', async () => {
   const broken = new GameData(async () => new Response('not javascript'));
   await assert.rejects(broken.mapList(), { status: 502 });
   assert.deepEqual(await broken.itemNames(), {});
+});
+test('monsters are listed with base gold, drops by chance and spawn maps', async () => {
+  const { monsters } = await new GameData(serve()).monsters();
+  assert.deepEqual(monsters.map(m => m.key), ['bee', 'goo']);
+  const [bee, goo] = monsters;
+  assert.equal(goo.gold, 20); assert.equal(bee.gold, null); assert.equal(bee.armor, 10); assert.equal(bee.damageType, 'magical');
+  assert.deepEqual(goo.spawns, [{ map: 'main', title: 'Mainland', count: 4 }]);
+  assert.deepEqual(bee.spawns, [{ map: 'main', title: 'Mainland', count: 0 }]);
+  assert.deepEqual(goo.drops.map(d => [d.item, d.title, d.chance, d.quantity]), [['hpot0', 'Health Potion', 0.5, 2], ['ringsj', 'Ring of Strength', 0.001, null]]);
 });
 test('item icon sheets are fetched once from the game and must be PNG', async () => {
   const urls = [];
@@ -146,7 +157,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/automation', 'automation', 'Co postavy dělají']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/automation', 'automation', 'Co postavy dělají'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí'], ['/monsters', 'monsters', 'Kde farmit'], ['/system', 'system', 'Systém']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -160,6 +171,7 @@ test('each panel page is the shared shell around its own fragment and script', a
   assert.doesNotMatch(await (await fetch(`${f.origin}/map`)).text(), /id="transfer-dialog"/);
   assert.equal((await fetch(`${f.origin}/js/map.js`)).status, 200);
   assert.equal((await fetch(`${f.origin}/index.html`)).status, 404);
+  assert.equal((await f.request('/api/system')).status, 503, 'without a system monitor');
 });
 test('saved inventories and bank come from the API token without leaking extra fields', async t => {
   const calls = [];
@@ -214,6 +226,101 @@ test('a running character is read live, including the bank while inside it', asy
   assert.equal(bank.data.source, 'live'); assert.equal(bank.data.via, 'Runner'); assert.equal(bank.data.gold, 1000);
   assert.equal(bank.data.packs[0].items[0].title, 'Ring of Strength');
   f.runtime.sessions.clear();
+});
+
+test('items of all characters and the bank are grouped with their locations', async t => {
+  const names = { ringsj: { name: 'Ring of Strength', compound: { str: 1 } }, helmet: { name: 'Helmet', upgrade: { armor: 1 } } };
+  const view = (name, extra = {}) => ({ ...itemView({ name, ...extra }, names) });
+  const result = aggregateItems([
+    { kind: 'character', name: 'A', source: 'live', gold: 10, items: [view('ringsj', { level: 1 }), null, view('ringsj', { level: 1, l: 'l' }), view('hpot0', { q: 5 })], equipment: [{ slot: 'ring1', item: view('ringsj', { level: 1 }) }, { slot: 'helmet', item: null }] },
+    { kind: 'character', name: 'B', error: 'Postava nepatří účtu.' },
+    { kind: 'bank', name: null, source: 'saved', gold: 100, observedAt: null, retrievedAt: '2026-10-10T00:00:00.000Z', packs: [{ name: 'items0', items: [view('ringsj', { level: 1 }), view('hpot0', { q: 7 }), view('helmet', { level: 7, p: 'shiny' })] }] },
+  ], names);
+  assert.equal(result.gold, 110);
+  assert.deepEqual(result.sources.map(s => [s.name, s.error ?? s.source]), [['A', 'live'], ['B', 'Postava nepatří účtu.'], [null, 'saved']]);
+  const ring = result.items.find(i => i.name === 'ringsj');
+  assert.equal(ring.total, 4); assert.equal(ring.upgrade, 'compound');
+  assert.deepEqual(ring.locations, [{ owner: 'A', place: 'equipment', locked: false, count: 1 }, { owner: 'A', place: 'inventory', locked: false, count: 1 }, { owner: 'A', place: 'inventory', locked: true, count: 1 }, { owner: null, place: 'bank', locked: false, count: 1 }]);
+  assert.equal(result.items.find(i => i.name === 'hpot0').total, 12);
+  const helmet = result.items.find(i => i.name === 'helmet');
+  assert.equal(helmet.upgrade, 'upgrade'); assert.equal(helmet.special, 'shiny'); assert.equal(helmet.level, 7);
+});
+test('the items endpoint reads every account character and the bank once a minute', async t => {
+  const calls = [];
+  const f = await fixture(t, async (url, options) => {
+    const method = url.slice(url.lastIndexOf('/') + 1), input = JSON.parse(options.body);
+    calls.push(method);
+    if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'Goldette', level: 33, class: 'merchant' }, { character: 'Gone', level: 1, class: 'mage' }] });
+    if (method === 'mainframe_get_character') {
+      if (input.character !== 'Goldette') return Response.json({ success: false, reason: 'not_found' }, { status: 404 });
+      return Response.json({ success: true, profile: { name: 'Goldette', class: 'merchant', level: 33, gold: 50, inventory: [{ name: 'hpot0', q: 3 }], equipment: { helmet: { name: 'helmet', level: 2 } } } });
+    }
+    if (method === 'get_bank') return Response.json({ success: true, gold: 1000, packs: { items0: [{ name: 'hpot0', q: 10 }] } });
+    throw new Error(`Unexpected ${method}`);
+  });
+  await f.gameApi.connect(apiToken); calls.length = 0;
+  const result = await f.request('/api/items');
+  assert.equal(result.status, 200);
+  assert.equal(result.data.gold, 1050);
+  assert.deepEqual(result.data.sources.map(s => [s.name, s.error ? 'error' : s.source]), [['Goldette', 'saved'], ['Gone', 'error'], [null, 'saved']]);
+  const potion = result.data.items.find(i => i.name === 'hpot0');
+  assert.equal(potion.title, 'Health Potion'); assert.equal(potion.total, 13);
+  assert.deepEqual(potion.locations.map(l => [l.owner, l.place, l.count]), [['Goldette', 'inventory', 3], [null, 'bank', 10]]);
+  const before = calls.length;
+  await f.request('/api/items'); await f.request('/api/items?refresh=1');
+  assert.equal(calls.length, before, 'cached for a minute and a refresh at most every 10 seconds');
+});
+
+test('long-term stats are bucketed by the viewer\'s hours and days', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.deepEqual((await f.request('/api/history/stats')).data.characters, []);
+  assert.equal((await f.request('/api/history/stats')).data.available, false);
+  const now = Date.now();
+  f.runtime.history = new History(null, () => {}, () => now);
+  f.runtime.history.samples.set('id-1', { name: 'Runner', points: [[now - 2 * 3_600_000, 5, 0, 100, 10], [now - 2 * 3_600_000 + 300_000, 5, 50, 100, 30], [now - 3_600_000, 6, 10, 200, 40]] });
+  const day = await f.request('/api/history/stats?range=24h&offset=120');
+  assert.equal(day.status, 200); assert.equal(day.data.available, true);
+  assert.equal(day.data.bucketMs, 3_600_000); assert.equal(day.data.to - day.data.from, 86_400_000);
+  assert.equal((day.data.to + 120 * 60_000) % 3_600_000, 0, 'buckets end on a whole hour of the viewer');
+  const [runner] = day.data.characters;
+  assert.equal(runner.xpGained, 50); assert.equal(runner.buckets.length, 24); assert.equal(runner.series.length, 3);
+  const week = await f.request('/api/history/stats?range=7d&offset=-300');
+  assert.equal(week.data.bucketMs, 86_400_000); assert.equal((week.data.to - 300 * 60_000) % 86_400_000, 0);
+  assert.equal((await f.request('/api/history/stats?range=1y')).status, 400);
+  assert.equal((await f.request('/api/history/stats?offset=9999')).status, 400);
+  f.runtime.history = null;
+});
+
+test('the journal is filtered by type and character and paged both ways', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.deepEqual((await f.request('/api/journal')).data, { entries: [], more: false, available: false, types: (await f.request('/api/journal')).data.types });
+  f.runtime.history = new History(null);
+  for (const [type, characterId] of [['start', 'id-1'], ['death', 'id-1'], ['event', null], ['death', 'id-2'], ['level', 'id-1']]) f.runtime.history.record({ type, characterId, message: type });
+  const all = (await f.request('/api/journal')).data;
+  assert.deepEqual(all.entries.map(e => e.id), [5, 4, 3, 2, 1]); assert.equal(all.available, true);
+  assert.deepEqual((await f.request('/api/journal?types=death,level')).data.entries.map(e => e.id), [5, 4, 2]);
+  assert.deepEqual((await f.request('/api/journal?types=death&character=id-1')).data.entries.map(e => e.id), [2]);
+  const page = (await f.request('/api/journal?limit=2')).data;
+  assert.deepEqual(page.entries.map(e => e.id), [5, 4]); assert.equal(page.more, true);
+  assert.deepEqual((await f.request('/api/journal?before=4&limit=2')).data.entries.map(e => e.id), [3, 2]);
+  assert.deepEqual((await f.request('/api/journal?after=3')).data.entries.map(e => e.id), [5, 4]);
+  assert.equal((await f.request('/api/journal?types=hack')).status, 400);
+  assert.equal((await f.request('/api/journal?character=../x')).status, 400);
+  f.runtime.history = null;
+});
+
+test('server events list realms and save which events notify', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  f.runtime.servers.set('EU I', { realm: 'EU I', via: 'Runner', observedAt: 1, events: [{ key: 'franky', live: true }], schedule: null });
+  const result = await f.request('/api/server-events');
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.realms.map(r => r.realm), ['EU I']);
+  assert.ok(result.data.catalog.some(e => e.key === 'franky' && e.kind === 'boss'));
+  assert.deepEqual(result.data.notifyEvents, []);
+  assert.deepEqual((await f.request('/api/settings/notify-events', 'PUT', { keys: ['icegolem', 'franky', 'franky'] })).data, { notifyEvents: ['franky', 'icegolem'] });
+  assert.deepEqual((await f.request('/api/server-events')).data.notifyEvents, ['franky', 'icegolem']);
+  assert.equal((await f.request('/api/settings/notify-events', 'PUT', { keys: ['<b>'] })).status, 400);
+  f.runtime.servers.clear();
 });
 
 test('values stored by CODE set() are listed live, pretty-printed and bounded', async t => {
@@ -353,7 +460,7 @@ test('the Automation page lists, sets and remembers what the CODE offers', async
   assert.deepEqual((await f.request(`/api/characters/${id}/controls/mode`, 'DELETE', {})).data, { removed: false });
   assert.deepEqual((await f.request('/api/automation')).data.characters[0].saved, {});
   const targets = await f.request('/api/targets');
-  assert.deepEqual(targets.data.monsters, [{ key: 'goo', name: 'Goo' }, { key: 'bee', name: 'Bee' }]);
+  assert.deepEqual(targets.data.monsters, [{ key: 'goo', name: 'Goo' }, { key: 'bee', name: 'Bee' }, { key: 'target', name: 'Target' }, { key: 'broken', name: 'Broken' }]);
   assert.deepEqual(targets.data.items.find(i => i.key === 'hpot0'), { key: 'hpot0', name: 'Health Potion' });
 });
 test('remembered Automation values are set again once the CODE offers them after a connection', async t => {

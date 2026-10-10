@@ -1,5 +1,5 @@
 // Inventory page: equipment, inventory and gold of each character, and the account's bank.
-import { $, api, app, boot, decimal, ensureOwned, escape, number, on, runningSessions } from './core.js';
+import { $, api, app, boot, decimal, ensureOwned, escape, itemIcon, number, on, runningSessions } from './core.js';
 
 const BANK = '__bank__';
 let inventoryTarget = new URLSearchParams(location.search).get('name'), inventoryData = null, inventoryJson = '', inventoryLoading = false;
@@ -38,13 +38,6 @@ function selectTarget(target) {
   if (target) url.searchParams.set('name', target); else url.searchParams.delete('name');
   history.replaceState(null, '', url);
   renderInventoryTargets(); loadInventory();
-}
-// Game icons are tiles of a sprite sheet proxied by the panel; scaled to 32 px with crisp pixels.
-const ICON_SIZE = 32;
-function itemIcon(icon) {
-  if (!icon) return '<span class="item-icon missing" aria-hidden="true"></span>';
-  const scale = ICON_SIZE / icon.size, px = value => `${Math.round(value * scale)}px`;
-  return `<span class="item-icon" aria-hidden="true" style="background-image:url('/api/item-sheets/${encodeURIComponent(icon.sheet)}');background-position:${px(-icon.x)} ${px(-icon.y)};background-size:${px(icon.width)} ${px(icon.height)}"></span>`;
 }
 // Stat labels as the game's item window names them; values marked % are percentages there too.
 const STAT_LABELS = { gold: 'Zlato', luck: 'Štěstí', xp: 'XP', lifesteal: 'Lifesteal', manasteal: 'Manasteal', evasion: 'Úhyb', miss: 'Minutí', reflection: 'Odraz', dreturn: 'Vrácené poškození', crit: 'Kritický zásah', critdamage: 'Kritické poškození', attack: 'Poškození', range: 'Dosah', hp: 'HP', str: 'Síla', int: 'Inteligence', dex: 'Obratnost', vit: 'Vitalita', for: 'Odolnost (for)', mp: 'MP', mp_cost: 'MP za útok', mp_reduction: 'Snížení MP skillů', stat: 'Stat', armor: 'Brnění', apiercing: 'Průraz brnění', rpiercing: 'Průraz rezistence', resistance: 'Rezistence', pnresistance: 'Odolnost vůči jedu', firesistance: 'Odolnost vůči ohni', fzresistance: 'Odolnost vůči mrazu', phresistance: 'Odolnost vůči úderům', stresistance: 'Odolnost vůči stavům', speed: 'Rychlost', frequency: 'Rychlost útoku', output: 'Výstup poškození', incdmgamp: 'Příchozí poškození', stun: 'Omráčení', explosion: 'Exploze', blast: 'Výbuch', breaks: 'Rozbití', charisma: 'Charisma', awesomeness: 'Úžasnost', bling: 'Bling', cuteness: 'Roztomilost', courage: 'Odvaha', mcourage: 'Magická odvaha', pcourage: 'Fyzická odvaha' };

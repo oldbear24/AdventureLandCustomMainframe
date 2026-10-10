@@ -129,7 +129,7 @@ function renderParty() {
     const leader = position(party.leader);
     const rows = party.members.map(m => {
       const p = position(m.name), mine = own.get(m.name.toLowerCase());
-      return `<tr><td><strong>${escape(m.name)}</strong>${m.name === party.leader ? ' <span class="tag slot">LEADER</span>' : ''}${mine ? ' <span class="tag">PANEL</span>' : ''}</td><td data-label="Třída · LVL">${escape(m.ctype || mine?.state.ctype || '—')} ${m.level ? `· ${number(m.level)}` : ''}</td><td data-label="Server">${escape(server)}</td><td data-label="Mapa">${escape(p?.map ? mapTitle(p.map) : '—')}</td><td data-label="Od leadera">${m.name === party.leader ? '—' : escape(distanceText(p, leader))}</td></tr>`;
+      return `<tr><td><strong>${escape(m.name)}</strong>${m.name === party.leader ? ' <span class="tag slot">LEADER</span>' : ''}${mine ? ' <span class="tag">PANEL</span>' : ''}</td><td>${escape(m.ctype || mine?.state.ctype || '—')} ${m.level ? `· ${number(m.level)}` : ''}</td><td>${escape(server)}</td><td>${escape(p?.map ? mapTitle(p.map) : '—')}</td><td>${m.name === party.leader ? '—' : escape(distanceText(p, leader))}</td></tr>`;
     }).join('');
     parts.push(`<h3 class="inventory-section">Party · leader ${escape(party.leader)} <small>${party.members.length} členů</small></h3><div class="table-wrap"><table class="party-table"><thead><tr><th>Postava</th><th>Třída · LVL</th><th>Server</th><th>Mapa</th><th>Od leadera</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   }

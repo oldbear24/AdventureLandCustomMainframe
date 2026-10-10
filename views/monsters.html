@@ -1,0 +1,15 @@
+      <section id="view-monsters" class="view" aria-labelledby="monsters-title">
+        <header class="page-head"><div><p class="eyebrow">HERNÍ DATA</p><h1 id="monsters-title">Kde farmit</h1></div></header>
+        <div class="surface items-filters monster-filters">
+          <div class="items-search"><label for="monster-search">Hledat monstrum nebo drop</label><input id="monster-search" type="search" placeholder="např. bee, ring, Spider…" maxlength="64"></div>
+          <div><label for="monster-map">Mapa</label><select id="monster-map"><option value="">Všechny mapy</option></select></div>
+          <div><label for="monster-damage">Typ útoku</label><select id="monster-damage"><option value="">Jakýkoli</option><option value="physical">Fyzický</option><option value="magical">Magický</option><option value="pure">Čistý</option></select></div>
+          <div><label for="monster-max-hp">Nejvýš HP</label><select id="monster-max-hp"><option value="">Bez omezení</option><option value="1000">1 000</option><option value="5000">5 000</option><option value="20000">20 000</option><option value="100000">100 000</option><option value="1000000">1 000 000</option></select></div>
+          <div><label for="monster-sort">Řadit</label><select id="monster-sort"><option value="xpPerHp">XP na HP</option><option value="goldPerHp">Zlato na HP</option><option value="xp">XP</option><option value="gold">Zlato</option><option value="hp">HP</option><option value="attack">Útok</option><option value="name">Název</option></select></div>
+          <label class="check monster-check"><input id="monster-spawning" type="checkbox" checked>Jen monstra, která se objevují na mapách</label>
+        </div>
+        <div class="surface"><div id="monster-table" class="table-wrap" aria-live="polite"><p class="muted">Načítám herní data…</p></div></div>
+        <p class="fine">Hodnoty pocházejí z veřejného <code>data.js</code> hry. XP a zlato jsou základní hodnoty za zabití, bez bonusů za štěstí, gold/XP vybavení, party nebo úroveň postavy; skutečný zisk je obvykle vyšší. Šance dropu je za jedno zabití. Bossové a kooperativní monstra se dělí mezi útočníky.</p>
+      </section>
+<!-- dialogs -->
+  <dialog id="monster-dialog" class="wide-dialog"><div class="section-head"><h2 id="monster-dialog-title">Monstrum</h2><button type="button" id="close-monster" class="ghost" aria-label="Zavřít">×</button></div><div id="monster-detail"></div></dialog>
