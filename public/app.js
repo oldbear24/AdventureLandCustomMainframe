@@ -10,7 +10,7 @@ async function api(url, method = 'GET', body) {
   const response = await fetch(`/api${url}`, { method, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; resetViews(); }
+    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; resetViews(); }
     throw new Error(data.error + (data.issues ? ` ${data.issues.map(i => `${i.field}: ${i.message}`).join(', ')}` : ''));
   }
   return data;
@@ -45,22 +45,105 @@ function renderSetup() {
   $('setup').hidden = steps.every(step => step.done);
   $('setup-steps').innerHTML = steps.map((step, index) => `<li class="${step.done ? 'done' : ''}"><span class="check-mark" aria-hidden="true">${step.done ? '✓' : index + 1}</span><span class="step-text">${escape(step.title)}${step.done ? ' <span class="sr-only">(hotovo)</span>' : `<small>${escape(step.hint)}</small>`}</span>${step.done ? '' : `<button class="ghost" data-setup-action="${step.action}">${escape(step.label)}</button>`}</li>`).join('');
 }
+const shortSlot = slot => String(slot).length > 16 ? `${String(slot).slice(0, 7)}…${String(slot).slice(-5)}` : String(slot);
+const percentage = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
+const duration = ms => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s >= 86_400 ? `${Math.floor(s / 86_400)} d ${Math.floor(s % 86_400 / 3600)} h` : s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min` : s >= 60 ? `${Math.floor(s / 60)} min` : `${s} s`;
+};
+const signed = value => `${value > 0 ? '+' : ''}${number(value)}`;
+// Server time offset, so skill cooldowns count down correctly even with a skewed client clock.
+let clockOffset = 0;
+const openDetails = new Set();
+const alertLabels = { dead: 'Mrtvá', idle: 'Nečinná', reconnect: 'Reconnect', potions: 'Lektvary', code: 'CODE' };
+function sparkline(series) {
+  if (!series || series.length < 2) return '';
+  const t0 = series[0].t, span = Math.max(1, series.at(-1).t - t0);
+  const line = key => {
+    const values = series.map(p => p[key]), min = Math.min(0, ...values), max = Math.max(...values), range = max - min || 1;
+    return series.map(p => `${((p.t - t0) / span * 100).toFixed(1)},${(28 - (p[key] - min) / range * 26).toFixed(1)}`).join(' ');
+  };
+  return `<svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polyline class="spark-xp" points="${line('xp')}"/><polyline class="spark-gold" points="${line('gold')}"/></svg>`;
+}
+function statsBlock(session) {
+  const stats = session?.stats, state = session?.state;
+  if (!stats) return '';
+  const span = stats.windowMs >= 60_000 ? `za ${duration(stats.windowMs)}` : 'sbírám data';
+  const idle = session.status === 'running' && session.idleMs >= 60_000 ? ` · bez aktivity ${duration(session.idleMs)}` : '';
+  return `<div class="card-stats"><div class="stat-cells"><span><small>XP/h</small><b>${stats.xpPerHour === null ? '—' : number(stats.xpPerHour)}</b></span><span><small>Gold/h</small><b class="${stats.goldPerHour < 0 ? 'negative' : ''}">${stats.goldPerHour === null ? '—' : signed(stats.goldPerHour)}</b></span><span><small>Další level</small><b>${stats.etaMs === null ? '—' : duration(stats.etaMs)}</b></span></div>${sparkline(stats.series)}<small class="stats-note"><i class="key-xp"></i>XP <i class="key-gold"></i>gold · ${span}${state ? ` · +${number(stats.xpGained)} XP, ${signed(stats.goldChange)} G` : ''}${idle}${session.autoReloads ? ` · auto ↻ ${session.autoReloads}×` : ''}</small></div>`;
+}
+function conditionChips(state) {
+  if (!state?.conditions?.length) return '';
+  const order = { debuff: 0, buff: 1, neutral: 2 };
+  return `<div class="conditions" aria-label="Aktivní efekty">${[...state.conditions].sort((a, b) => order[a.kind] - order[b.kind] || a.name.localeCompare(b.name)).map(c => `<span class="condition ${c.kind}">${escape(c.name)}${c.ms !== null && c.ms > 0 ? `<em>${duration(c.ms)}</em>` : ''}</span>`).join('')}</div>`;
+}
+function skillsBlock(c, session) {
+  const skills = session?.state?.skills;
+  if (!skills?.length) return '';
+  const base = Date.parse(session.state.observedAt) + clockOffset, key = `skills:${c.id}`;
+  return `<details class="card-more" data-key="${key}" ${openDetails.has(key) ? 'open' : ''}><summary>Cooldowny skillů <small>${skills.filter(s => s.ms > 0).length}/${skills.length} čeká</small></summary><div class="skill-list">${skills.map(s => `<div class="skill"><span title="${escape(s.key)}">${escape(s.name)}</span><b data-ready-at="${base + s.ms}">${s.ms > 0 ? `${(s.ms / 1000).toFixed(1)} s` : 'připraveno'}</b>${s.cooldown ? `<small>CD ${(s.cooldown / 1000).toFixed(s.cooldown < 10_000 ? 1 : 0)} s</small>` : ''}</div>`).join('')}</div></details>`;
+}
 function characterCard(c, session) {
   const state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
   const dead = status === 'running' && state?.rip;
   const labels = { running: dead ? 'DEAD' : 'ONLINE', starting: 'STARTUJI', reconnecting: 'OBNOVUJI', stopped: 'OFFLINE' };
-  const percentage = (value, max) => Math.max(0, Math.min(100, max ? value / max * 100 : 0));
   const script = dashboard.scripts.find(s => s.id === c.scriptId);
   const codeState = state ? (state.codeRunning ? '<span class="code-state on">CODE běží</span>' : '<span class="code-state off">CODE stojí</span>') : '';
-  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}</strong><small>${script ? escape(slotLabel(script)) : 'Při startu se najde a stáhne automaticky.'}${codeState ? ` · ${codeState}` : ''}</small></div>${script ? `<button class="ghost" data-action="code" data-id="${c.id}">Upravit CODE</button>` : ''}</div>`;
+  const slotText = script?.remoteSlot ? `Herní slot ${shortSlot(script.remoteSlot)} · verze ${script.remoteVersion ?? '?'}` : script ? slotLabel(script) : 'Při startu se najde a stáhne automaticky.';
+  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}</strong><small title="${escape(script ? slotLabel(script) : '')}">${escape(slotText)}</small>${codeState ? `<small>${codeState}</small>` : ''}</div>${script ? `<button class="ghost" data-action="code" data-id="${c.id}">Upravit CODE</button>` : ''}</div>`;
   const error = session?.error || session?.code?.error;
-  return `<article class="character-card ${status === 'running' ? 'is-running' : ''}">
+  const alerts = session?.alerts || [];
+  const xp = state?.max_xp ? `<div><div class="meter-label"><span>XP</span><span>${percentage(state.xp, state.max_xp).toFixed(1)} %${session?.stats?.etaMs ? ` · LVL ${state.level + 1} za ${duration(session.stats.etaMs)}` : ''}</span></div><div class="meter xp"><i style="--fill:${percentage(state.xp, state.max_xp)}%"></i></div></div>` : '';
+  const supplies = state ? `<div class="details supplies"><span title="Lektvary HP / MP v inventáři" class="${alerts.some(a => a.type === 'potions') ? 'warn' : ''}">⚗ HP ${number(state.potions?.hp)} · MP ${number(state.potions?.mp)}</span><span title="Volná místa v inventáři">▤ volno ${number(state.esize)}${state.isize ? ` / ${number(state.isize)}` : ''}</span>${state.party ? `<span title="Party">⚑ ${escape(state.party.leader)}</span>` : ''}</div>` : '';
+  return `<article class="character-card ${status === 'running' ? 'is-running' : ''} ${alerts.length ? 'has-alert' : ''}">
     <div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${labels[status]}</span></div>
-    <div class="meters"><div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div></div><div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div></div></div>
+    ${alerts.length ? `<ul class="card-alerts" role="alert">${alerts.map(a => `<li class="alert-${a.type}"><b>${alertLabels[a.type] || a.type}</b>${escape(a.message)}</li>`).join('')}</ul>` : ''}
+    <div class="meters"><div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div></div><div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div></div>${xp}</div>
+    ${conditionChips(state)}
     <div class="details"><span>${state ? escape(state.map) : 'Neběží'}</span><span>${state ? `${number(state.gold)} G` : '—'}</span></div>
+    ${supplies}${statsBlock(session)}
     ${codeBox}${error ? `<p class="card-error">${escape(error)}</p>` : ''}
+    ${skillsBlock(c, session)}
     <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || status !== 'running' ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || status !== 'running' || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><button class="ghost" data-action="inventory" data-id="${c.id}">Inventář</button><button class="ghost" data-action="locate" data-id="${c.id}" ${status !== 'running' ? 'disabled' : ''}>Mapa</button><button class="ghost" data-action="logs" data-id="${c.id}">Logy</button><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
   </article>`;
+}
+// Party overview: parties of running characters, servers and distances between own characters.
+const distance = (a, b) => a && b && a.map && a.map === b.map && Number.isFinite(a.x) && Number.isFinite(b.x) ? Math.round(Math.hypot(a.x - b.x, a.y - b.y)) : null;
+const distanceText = (a, b) => { const d = distance(a, b); return d !== null ? `${number(d)} px` : a?.map && b?.map ? 'jiná mapa' : '—'; };
+function renderParty() {
+  const running = runningSessions();
+  if (!running.length) { $('party-panel').hidden = true; return; }
+  $('party-panel').hidden = false;
+  const config = id => dashboard.characters.find(c => c.id === id);
+  const own = new Map(running.map(s => [s.state.name?.toLowerCase(), s]));
+  const servers = new Map();
+  for (const s of running) { const c = config(s.id), key = `${c.region} ${c.server}`; servers.set(key, [...(servers.get(key) || []), c.name]); }
+  const parts = [];
+  if (servers.size > 1) parts.push(`<p class="notice">Postavy běží na různých serverech: ${[...servers].map(([server, names]) => `<b>${escape(server)}</b> (${escape(names.join(', '))})`).join(' · ')}. Party a CODE zprávy fungují jen na stejném serveru.</p>`);
+  const parties = new Map();
+  for (const s of running) if (s.state.party) { const key = s.state.party.leader.toLowerCase(); if (!parties.has(key)) parties.set(key, s); }
+  for (const s of parties.values()) {
+    const party = s.state.party, server = `${config(s.id).region} ${config(s.id).server}`;
+    const position = name => { const live = own.get(name.toLowerCase())?.state; return live ? { map: live.map, x: live.x, y: live.y } : party.members.find(m => m.name === name) || null; };
+    const leader = position(party.leader);
+    const rows = party.members.map(m => {
+      const p = position(m.name), mine = own.get(m.name.toLowerCase());
+      return `<tr><td><strong>${escape(m.name)}</strong>${m.name === party.leader ? ' <span class="tag slot">LEADER</span>' : ''}${mine ? ' <span class="tag">PANEL</span>' : ''}</td><td>${escape(m.ctype || mine?.state.ctype || '—')} ${m.level ? `· ${number(m.level)}` : ''}</td><td>${escape(server)}</td><td>${escape(p?.map ? mapTitle(p.map) : '—')}</td><td>${m.name === party.leader ? '—' : escape(distanceText(p, leader))}</td></tr>`;
+    }).join('');
+    parts.push(`<h3 class="inventory-section">Party · leader ${escape(party.leader)} <small>${party.members.length} členů</small></h3><div class="table-wrap"><table class="party-table"><thead><tr><th>Postava</th><th>Třída · LVL</th><th>Server</th><th>Mapa</th><th>Od leadera</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  }
+  const solo = running.filter(s => !s.state.party).map(s => s.state.name);
+  if (solo.length) parts.push(`<p class="fine">Bez party: ${escape(solo.join(', '))}</p>`);
+  if (running.length > 1) {
+    const pairs = [];
+    for (let i = 0; i < running.length; i++) for (let j = i + 1; j < running.length; j++) {
+      const a = running[i], b = running[j], ca = config(a.id), cb = config(b.id);
+      const sameServer = ca.region === cb.region && ca.server === cb.server;
+      pairs.push(`<span class="meta-chip ${sameServer ? '' : 'draft'}">${escape(a.state.name)} ↔ ${escape(b.state.name)}: ${sameServer ? escape(distanceText(a.state, b.state)) : 'jiný server'}</span>`);
+    }
+    parts.push(`<h3 class="inventory-section">Vzdálenosti postav v panelu</h3><div class="editing-meta">${pairs.join('')}</div>`);
+  }
+  $('party-body').innerHTML = parts.join('') || '<p class="fine">Žádná běžící postava není v partě.</p>';
 }
 function render() {
   const sessions = new Map(dashboard.sessions.map(s => [s.id, s]));
@@ -79,12 +162,22 @@ function render() {
   $('account-dialog-status').textContent = accountText;
   $('manage-account').textContent = account?.configured ? 'Spravovat účet' : 'Připojit účet';
   $('disconnect-account').hidden = !account?.configured;
+  const notify = dashboard.config.notifications || {};
+  const channels = [notify.discord && 'Discord', notify.telegram && 'Telegram'].filter(Boolean);
+  $('notify-status').textContent = channels.length ? `Upozornění se posílají na: ${channels.join(' a ')}.` : 'Webhook není nastaven. Doplň do .env DISCORD_WEBHOOK_URL nebo TELEGRAM_BOT_TOKEN a TELEGRAM_CHAT_ID a restartuj kontejner.';
+  $('test-notify').disabled = !channels.length;
   $('api-status').textContent = dashboard.gameApi?.configured ? 'API token je připojen. Seznam načti tlačítkem.' : 'Připoj API token v dialogu Herní účet.';
   $('load-owned').disabled = !dashboard.gameApi?.configured;
   $('disconnect-token').hidden = !dashboard.gameApi?.configured;
   $('load-code-slots').disabled = !dashboard.gameApi?.configured;
   $('add-character').disabled = dashboard.characters.length >= dashboard.config.maxCharacters;
+  if (Number.isFinite(dashboard.now)) clockOffset = Date.now() - dashboard.now;
   $('characters').innerHTML = dashboard.characters.length ? dashboard.characters.map(c => characterCard(c, sessions.get(c.id))).join('') : '<div class="empty"><h2>Tvůj tým začíná tady.</h2><p>Přidej postavu, přiřaď jí herní CODE slot a spusť ji.</p></div>';
+  const stopped = dashboard.characters.filter(c => !sessions.has(c.id));
+  $('start-all').disabled = !stopped.length || !dashboard.config.authConfigured || pending.has('batch');
+  $('stop-all').disabled = !dashboard.sessions.length || pending.has('batch');
+  $('move-all').disabled = !dashboard.characters.length || pending.has('batch');
+  renderParty(); announceAlerts();
   renderScriptList(); updateEditingHeader();
   const filter = $('log-filter').value;
   const options = `<option value="all">Všechny postavy</option><option value="system">Systém</option>${dashboard.characters.map(c => `<option value="${c.id}">${escape(c.name)}</option>`).join('')}`;
@@ -95,10 +188,34 @@ function render() {
   if (!$('view-map').hidden) openMapView();
   if (!$('view-inventory').hidden) { openInventoryView(); if (inventoryData?.source === 'live') loadInventory(true); }
 }
+// New problems show a toast once; the page title counts characters needing attention.
+let seenAlerts = null;
+function announceAlerts() {
+  const current = new Map();
+  for (const session of dashboard.sessions) for (const alert of session.alerts || []) current.set(`${session.id}:${alert.type}`, `${characterName(session.id)}: ${alert.message}`);
+  if (seenAlerts) {
+    const fresh = [...current].filter(([key]) => !seenAlerts.has(key)).map(([, text]) => text);
+    if (fresh.length) toast(`⚠ ${fresh.join(' · ')}`, true);
+  }
+  seenAlerts = new Set(current.keys());
+  const affected = dashboard.sessions.filter(s => s.alerts?.length).length;
+  document.title = `${affected ? `(${affected}) ` : ''}Adventure Land · Mainframe`;
+}
+setInterval(() => {
+  for (const element of document.querySelectorAll('[data-ready-at]')) {
+    const left = Number(element.dataset.readyAt) - Date.now();
+    element.textContent = left > 0 ? `${(left / 1000).toFixed(left < 10_000 ? 1 : 0)} s` : 'připraveno';
+    element.classList.toggle('ready', left <= 0);
+  }
+}, 1000);
+$('characters').addEventListener('toggle', event => {
+  const key = event.target.dataset?.key; if (!key) return;
+  if (event.target.open) openDetails.add(key); else openDetails.delete(key);
+}, true);
 function renderScriptList() {
   $('script-list').innerHTML = dashboard.scripts.length ? dashboard.scripts.map(script => {
     const users = usersOf(script.id).map(c => c.name + (isRunning(c.id) ? ' (běží)' : ''));
-    return `<button class="script-item" role="listitem" data-script-id="${script.id}" aria-current="${script.id === selectedScript}"><strong>${escape(script.name)}</strong><span class="tag ${script.remoteSlot ? 'slot' : 'draft'}">${script.remoteSlot ? `SLOT ${escape(script.remoteSlot)} · v${escape(script.remoteVersion ?? '?')}` : 'NÁVRH'}</span><small>${users.length ? `Používá: ${escape(users.join(', '))}` : 'Nepoužívá žádná postava'}</small></button>`;
+    return `<button class="script-item" role="listitem" data-script-id="${script.id}" aria-current="${script.id === selectedScript}"><strong>${escape(script.name)}</strong><span class="tag ${script.remoteSlot ? 'slot' : 'draft'}" title="${escape(script.remoteSlot || '')}">${script.remoteSlot ? `SLOT ${escape(shortSlot(script.remoteSlot))} · v${escape(script.remoteVersion ?? '?')}` : 'NÁVRH'}</span><small>${users.length ? `Používá: ${escape(users.join(', '))}` : 'Nepoužívá žádná postava'}</small></button>`;
   }).join('') : '<p class="muted">Zatím žádné skripty. Načti herní slot níže.</p>';
 }
 function updateEditingHeader() {
@@ -143,7 +260,7 @@ $('login-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
-  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; resetViews(); }
+  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; resetViews(); }
   catch (error) { toast(error.message, true); }
 });
 function openAccount() {
@@ -172,6 +289,7 @@ $('disconnect-account').addEventListener('click', async () => {
 function openCharacter(character) {
   $('character-form').reset(); $('character-id').value = character?.id || ''; $('dialog-title').textContent = character?.id ? `Nastavení postavy ${character.name}` : 'Přidat postavu';
   $('character-name').value = character?.name || ''; $('character-region').value = character?.region || 'EU'; $('character-server').value = character?.server || 'I'; $('character-autostart').checked = character?.autoStart || false;
+  $('character-idle').value = character?.idleMinutes ?? 10; $('character-auto-reload').checked = character?.autoReloadIdle || false; $('character-potions').value = character?.potionMin ?? 10;
   $('character-script').innerHTML = scriptOptions(character?.scriptId || '', 'Automaticky – výchozí CODE postavy', true);
   const scriptHint = () => { $('character-script-hint').textContent = $('character-script').value ? 'Před každým startem se CODE stáhne z vybraného herního slotu.' : 'Při startu se najde výchozí CODE slot postavy ve hře, stáhne se a přiřadí. Vyžaduje API token.'; };
   $('character-script').onchange = scriptHint; scriptHint();
@@ -182,7 +300,7 @@ $('character-form').addEventListener('submit', async event => {
   event.preventDefault(); event.submitter.disabled = true;
   const id = $('character-id').value;
   try {
-    await api(`/characters${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', { name: $('character-name').value, region: $('character-region').value, server: $('character-server').value, scriptId: $('character-script').value || null, autoStart: $('character-autostart').checked });
+    await api(`/characters${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', { name: $('character-name').value, region: $('character-region').value, server: $('character-server').value, scriptId: $('character-script').value || null, autoStart: $('character-autostart').checked, idleMinutes: Number($('character-idle').value), autoReloadIdle: $('character-auto-reload').checked, potionMin: Number($('character-potions').value) });
     $('character-dialog').close(); toast('Postava uložena.'); await refresh();
   } catch (error) { toast(error.message, true); }
   finally { event.submitter.disabled = false; }
@@ -386,6 +504,40 @@ async function ensureOwned() {
   try { await loadOwned(); } catch { /* The views work without the saved account list. */ }
 }
 
+// Batch actions
+async function batch(body, label) {
+  pending.add('batch'); render();
+  try {
+    const { results } = await api('/characters/batch', 'POST', body);
+    const failed = results.filter(r => !r.ok);
+    if (failed.length) toast(`${label}: ${failed.map(r => `${r.name} – ${r.error}`).join(' · ')}`, true);
+    else toast(`${label}: hotovo (${results.filter(r => !r.skipped).length}).`);
+  } catch (error) { toast(error.message, true); }
+  finally { pending.delete('batch'); await refresh(); }
+}
+$('start-all').addEventListener('click', () => batch({ action: 'start' }, 'Spuštění všech'));
+$('stop-all').addEventListener('click', () => { if (confirm('Zastavit všechny běžící postavy? Vypne se i jejich autostart.')) batch({ action: 'stop' }, 'Zastavení všech'); });
+$('move-all').addEventListener('click', () => {
+  const first = dashboard.characters[0];
+  $('move-region').value = first?.region || 'EU'; $('move-server').value = first?.server || 'I';
+  $('move-characters').innerHTML = dashboard.characters.map(c => `<label class="check"><input type="checkbox" value="${c.id}" checked>${escape(c.name)} <small class="muted">${escape(c.region)} ${escape(c.server)}${isRunning(c.id) ? ' · běží' : ''}</small></label>`).join('');
+  $('move-dialog').showModal();
+});
+$('close-move').addEventListener('click', () => $('move-dialog').close());
+$('move-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const ids = [...$('move-characters').querySelectorAll('input:checked')].map(input => input.value);
+  if (!ids.length) return toast('Vyber alespoň jednu postavu.', true);
+  $('move-dialog').close();
+  batch({ action: 'move', ids, region: $('move-region').value, server: $('move-server').value }, `Přesun na ${$('move-region').value} ${$('move-server').value}`);
+});
+$('test-notify').addEventListener('click', async () => {
+  $('test-notify').disabled = true;
+  try { const result = await api('/notifications/test', 'POST', {}); toast(`Testovací upozornění odesláno (${result.delivered}).`); }
+  catch (error) { toast(error.message, true); }
+  finally { $('test-notify').disabled = false; }
+});
+
 // Live map
 const svgNS = 'http://www.w3.org/2000/svg';
 const mapState = { name: '', follow: '', view: null, list: null, listError: '', cache: new Map(), loading: new Set(), wallsOf: '' };
@@ -482,14 +634,18 @@ function drawOverlay(map, running, saved) {
   for (const s of running) {
     const target = s.state.target && (s.state.nearby || []).find(e => e.kind === 'monster' && e.target);
     if (target) parts.push(`<line class="map-target" x1="${s.state.x}" y1="${s.state.y}" x2="${target.x}" y2="${target.y}"/>`);
-    parts.push(`<g class="map-own${s === followed && mapState.follow ? ' followed' : ''}${s.state.rip ? ' dead' : ''}" data-follow="${s.id}" style="--class:${classColors[s.state.ctype] || '#bcf878'}"><circle cx="${s.state.x}" cy="${s.state.y}" r="${7 * u}"/><text x="${s.state.x}" y="${s.state.y - 12 * u}" text-anchor="middle" font-size="${font * 1.15}">${escape(s.state.name)}${s.state.rip ? ' ✝' : ''}</text></g>`);
+    // A coloured ring shows active effects: red for any debuff, green for buffs only.
+    const effects = s.state.conditions || [], debuffs = effects.filter(e => e.kind === 'debuff'), buffs = effects.filter(e => e.kind === 'buff');
+    const ring = debuffs.length ? 'debuff' : buffs.length ? 'buff' : '';
+    if (ring) parts.push(`<circle class="map-effect ${ring}" cx="${s.state.x}" cy="${s.state.y}" r="${12 * u}"><title>${escape((debuffs.length ? debuffs : buffs).map(e => e.name).join(', '))}</title></circle>`);
+    parts.push(`<g class="map-own${s === followed && mapState.follow ? ' followed' : ''}${s.state.rip ? ' dead' : ''}" data-follow="${s.id}" style="--class:${classColors[s.state.ctype] || '#bcf878'}"><title>${escape([s.state.name, ...effects.map(e => `${e.kind === 'debuff' ? '▼' : e.kind === 'buff' ? '▲' : '•'} ${e.name}`)].join('\n'))}</title><circle cx="${s.state.x}" cy="${s.state.y}" r="${7 * u}"/><text x="${s.state.x}" y="${s.state.y - 12 * u}" text-anchor="middle" font-size="${font * 1.15}">${escape(s.state.name)}${s.state.rip ? ' ✝' : ''}</text></g>`);
   }
   parts.push('</g>');
   $('map-overlay').innerHTML = parts.join('');
 }
 function renderMapSide(name) {
   const running = runningSessions();
-  const rows = running.map(s => `<button class="map-character ${s.id === mapState.follow ? 'active' : ''}" data-follow="${s.id}"><i style="background:${classColors[s.state.ctype] || '#bcf878'}"></i><span><strong>${escape(s.state.name)}</strong><small>${escape(mapTitle(s.state.map))} · ${number(s.state.x)}, ${number(s.state.y)}${s.state.target ? ` · cíl ${escape(s.state.target)}` : ''}</small></span><em>živě</em></button>`);
+  const rows = running.map(s => `<button class="map-character ${s.id === mapState.follow ? 'active' : ''}" data-follow="${s.id}"><i style="background:${classColors[s.state.ctype] || '#bcf878'}"></i><span><strong>${escape(s.state.name)}</strong><small>${escape(mapTitle(s.state.map))} · ${number(s.state.x)}, ${number(s.state.y)}${s.state.target ? ` · cíl ${escape(s.state.target)}` : ''}</small>${(s.state.conditions || []).filter(e => e.kind !== 'neutral').length ? `<small class="map-effects">${s.state.conditions.filter(e => e.kind !== 'neutral').map(e => `<b class="${e.kind}">${escape(e.name)}</b>`).join(' ')}</small>` : ''}</span><em>živě</em></button>`);
   const runningNames = new Set(running.map(s => s.state.name?.toLowerCase()));
   for (const c of ownedCharacters.filter(c => c.map && !runningNames.has(c.name.toLowerCase()))) {
     rows.push(`<button class="map-character saved" data-map="${escape(c.map)}"><i></i><span><strong>${escape(c.name)}</strong><small>${escape(mapTitle(c.map))} · ${number(c.x)}, ${number(c.y)}${c.online ? ' · online jinde' : ''}</small></span><em>uloženo</em></button>`);

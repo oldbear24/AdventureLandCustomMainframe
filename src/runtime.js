@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { createHash, randomUUID } from 'node:crypto';
+import { NOTIFY_COOLDOWN, addSample, alertsFor, extrasView, isActivity, summarizeStats } from './telemetry.js';
 
 export const GAME_ORIGIN = 'https://adventure.land';
 export const LOG_LIMIT = 200;
@@ -25,7 +26,7 @@ export class Runtime {
     this.gameApi = gameApi; this.nextCodeSync = 0;
     this.browser = null; this.sessions = new Map(); this.logs = [];
     this.queue = Promise.resolve(); this.closing = false; this.sequence = 0;
-    this.timer = null;
+    this.timer = null; this.notifier = null; this.stats = new Map();
   }
   log(id, level, message) {
     const text = this.redact(message);
@@ -141,7 +142,7 @@ export class Runtime {
       }
     }));
     await this.loadScript(session, prefetched);
-    session.status = 'running'; session.error = null; session.attempts = 0;
+    session.status = 'running'; session.error = null; session.attempts = 0; session.lastActivityAt = Date.now();
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
   }
   // A character without assigned CODE gets its own default game slot, linked as a shared script.
@@ -329,13 +330,68 @@ export class Runtime {
           const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
             .map(e => ({ kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
             .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
-          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null };
+          const G = window.G || {}, now = Date.now(), items = Array.isArray(c.items) ? c.items : [];
+          const count = pattern => items.reduce((sum, item) => sum + (item && pattern.test(item.name) ? (item.q || 1) : 0), 0);
+          // Active conditions (character.s) classified by the game's own definitions.
+          const conditions = Object.entries(c.s && typeof c.s === 'object' ? c.s : {}).filter(([, value]) => value && typeof value === 'object').map(([key, value]) => {
+            const definition = G.conditions?.[key];
+            return { key, name: definition?.name, kind: definition?.debuff || definition?.bad ? 'debuff' : definition?.buff ? 'buff' : 'neutral', ms: value.ms };
+          });
+          // next_skill holds when each used skill becomes available again.
+          let lastSkillAt = 0;
+          const skills = Object.entries(window.next_skill && typeof window.next_skill === 'object' ? window.next_skill : {}).map(([key, value]) => {
+            const at = value instanceof Date ? value.getTime() : Number(value);
+            const cooldown = G.skills?.[key]?.cooldown;
+            if (Number.isFinite(at) && Number.isFinite(cooldown)) lastSkillAt = Math.max(lastSkillAt, at - cooldown);
+            else if (Number.isFinite(at)) lastSkillAt = Math.max(lastSkillAt, at);
+            return { key, name: G.skills?.[key]?.name, ms: Number.isFinite(at) ? at - now : 0, cooldown };
+          });
+          const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
+          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null,
+            extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, party: c.party ? { leader: c.party, members } : null } };
         }));
-        if (session.state) session.state.observedAt = new Date().toISOString();
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
+        const { extras, ...state } = session.state;
+        const previous = session.previousState;
+        session.state = { ...state, ...extrasView(extras), observedAt: new Date().toISOString() };
+        await this.observe(session, previous);
       } catch (error) { session.state = null; this.failed(session, error); }
     }
+    for (const session of this.sessions.values()) await this.updateAlerts(session);
   }
+  // Feeds the XP/gold history and frozen-CODE detection; reloads CODE of an idle character when enabled.
+  async observe(session, previous) {
+    const now = Date.now(), state = session.state;
+    session.previousState = state;
+    if (!this.stats.has(session.id)) this.stats.set(session.id, []);
+    addSample(this.stats.get(session.id), state, now);
+    if (!previous || isActivity(previous, state)) session.lastActivityAt = now;
+    session.lastActivityAt ??= now;
+    const character = session.character;
+    const idleMinutes = character.idleMinutes ?? 10;
+    if (!character.autoReloadIdle || !idleMinutes || state.rip || !session.code || session.code.error) return;
+    if (now - session.lastActivityAt < idleMinutes * 60_000) return;
+    this.log(session.id, 'error', `CODE nic nedělá ${Math.floor((now - session.lastActivityAt) / 60_000)} min; automaticky ho načítám znovu.`);
+    session.autoReloads = (session.autoReloads || 0) + 1;
+    session.lastActivityAt = now;
+    try { await this.loadScript(session); } catch (error) { await this.pauseCode(session, error); }
+  }
+  async updateAlerts(session) {
+    const now = Date.now();
+    session.alerts = alertsFor(session, session.character, now);
+    const active = new Set(session.alerts.map(a => a.type));
+    session.notified ||= new Map();
+    for (const alert of session.alerts) {
+      if (session.activeAlerts?.has(alert.type)) continue;
+      this.log(session.id, 'error', `Upozornění: ${alert.message}`);
+      if (now - (session.notified.get(alert.type) || 0) < NOTIFY_COOLDOWN) continue;
+      session.notified.set(alert.type, now);
+      // Delivery runs in the background so a slow webhook does not hold the runtime queue.
+      this.notifier?.send(`⚠ ${session.character.name} (${session.character.region} ${session.character.server}): ${this.redact(alert.message)}`).catch(() => {});
+    }
+    session.activeAlerts = active;
+  }
+  forget(id) { this.stats.delete(id); }
   stop(id) { return this.exclusive(() => this.stopInternal(id)); }
   async stopInternal(id) {
     const session = this.sessions.get(id);
@@ -345,7 +401,12 @@ export class Runtime {
     this.log(id, 'info', 'Postava odpojena.');
   }
   snapshot() {
-    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt, code }) => ({ id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, code }));
+    const now = Date.now();
+    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt, code, alerts, lastActivityAt, autoReloads, attempts }) => ({
+      id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, code, attempts,
+      alerts: (alerts || []).map(a => ({ ...a, message: this.redact(a.message) })), idleMs: status === 'running' && lastActivityAt ? now - lastActivityAt : null, autoReloads: autoReloads || 0,
+      stats: this.stats.has(id) ? summarizeStats(this.stats.get(id), status === 'running' ? state : null, now) : null,
+    }));
   }
   async close() {
     this.closing = true; clearInterval(this.timer);

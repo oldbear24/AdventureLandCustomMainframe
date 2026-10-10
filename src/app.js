@@ -177,11 +177,58 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.get('/api/dashboard', (_req, res) => res.json({
     characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
     sessions: runtime.snapshot(), logs: runtime.logs,
-    config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters },
+    config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters, notifications: runtime.notifier?.status() || { discord: false, telegram: false } },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
     gameApi: gameApi?.status() || { configured: false },
-    uptime: Math.floor(process.uptime()),
+    uptime: Math.floor(process.uptime()), now: Date.now(),
   }));
+  app.post('/api/notifications/test', async (req, res) => {
+    z.object({}).strict().parse(req.body);
+    if (!runtime.notifier?.configured()) throw new HttpError(409, 'Nastav DISCORD_WEBHOOK_URL nebo TELEGRAM_BOT_TOKEN a TELEGRAM_CHAT_ID v .env.');
+    const delivered = await runtime.notifier.send('✅ Testovací upozornění z Adventure Land Mainframe.');
+    if (!delivered) throw new HttpError(502, 'Upozornění se nepodařilo doručit. Podrobnosti jsou v systémových logech.');
+    res.json({ delivered });
+  });
+  // Start, stop or move several characters at once; each character reports its own result.
+  const batchSchema = z.object({
+    action: z.enum(['start', 'stop', 'move']), ids: z.array(z.uuid()).max(4).optional(),
+    region: characterSchema.shape.region.optional(), server: characterSchema.shape.server.optional(),
+  }).strict().refine(input => input.action !== 'move' || (input.region && input.server), 'Přesun vyžaduje region a server.');
+  app.post('/api/characters/batch', async (req, res) => {
+    const input = batchSchema.parse(req.body);
+    const targets = store.snapshot().characters.filter(c => !input.ids || input.ids.includes(c.id));
+    if (!targets.length) throw new HttpError(400, 'Žádná postava k provedení akce.');
+    const results = [];
+    const report = (character, error = null, skipped = false) => results.push({ id: character.id, name: character.name, ok: !error, skipped, error: error ? runtime.redact(error.message || error) : null });
+    const startAll = async list => {
+      for (const character of list) {
+        try { await runtime.start(character.id); report(character); } catch (error) { report(character, error); }
+      }
+    };
+    if (input.action === 'start') {
+      const idle = targets.filter(c => !runtime.sessions.has(c.id));
+      for (const character of targets.filter(c => runtime.sessions.has(c.id))) report(character, null, true);
+      await startAll(idle);
+    } else if (input.action === 'stop') {
+      await runtime.exclusive(async () => {
+        const ids = new Set(targets.map(c => c.id));
+        await store.update(state => { for (const c of state.characters) if (ids.has(c.id)) c.autoStart = false; });
+        for (const character of targets) { await runtime.stopInternal(character.id); report(character); }
+      });
+    } else {
+      // Running characters are stopped, moved and started again; autostart is kept.
+      const running = await runtime.exclusive(async () => {
+        const active = targets.filter(c => runtime.sessions.has(c.id));
+        for (const character of active) await runtime.stopInternal(character.id);
+        const ids = new Set(targets.map(c => c.id));
+        await store.update(state => { for (const c of state.characters) if (ids.has(c.id)) { c.region = input.region; c.server = input.server; } });
+        return active;
+      });
+      for (const character of targets.filter(c => !running.includes(c))) report(character);
+      await startAll(running);
+    }
+    res.json({ results });
+  });
   app.post('/api/characters', async (req, res) => {
     const input = characterSchema.parse(req.body);
     const character = await store.update(state => {
@@ -208,7 +255,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   app.delete('/api/characters/:id', async (req, res) => {
     await runtime.exclusive(async () => {
-      await runtime.stopInternal(req.params.id);
+      await runtime.stopInternal(req.params.id); runtime.forget(req.params.id);
       await store.update(state => { state.characters = state.characters.filter(c => c.id !== req.params.id); });
     }); res.json({ ok: true });
   });

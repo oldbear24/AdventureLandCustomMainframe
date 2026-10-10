@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { isIP } from 'node:net';
+import { notifierConfig } from './notifier.js';
 
 const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
 
@@ -31,6 +32,7 @@ export function configFromEnv(env = process.env) {
     host: env.HOST || '127.0.0.1', port, maxCharacters,
     username, password: env.ADMIN_PASSWORD, authCookie: env.AL_AUTH_COOKIE || '',
     cookieName: env.AL_COOKIE_NAME || 'auth', dataDir, publicOrigin, warnings,
+    notifications: notifierConfig(env),
     tls: {
       selfSigned, hostnames: [...new Set([...hostnames, 'localhost', '127.0.0.1', '::1'])],
       certFile: selfSigned ? path.join(dataDir, 'tls', 'cert.pem') : path.resolve(env.TLS_CERT_FILE),

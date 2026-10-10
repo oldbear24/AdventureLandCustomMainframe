@@ -10,6 +10,10 @@ export const characterSchema = z.object({
   server: z.string().regex(/^[a-zA-Z0-9_-]{1,24}$/),
   scriptId: z.string().uuid().nullable().default(null),
   autoStart: z.boolean().default(false),
+  // Alerts and frozen-CODE detection: 0 disables the check.
+  idleMinutes: z.number().int().min(0).max(240).default(10),
+  autoReloadIdle: z.boolean().default(false),
+  potionMin: z.number().int().min(0).max(9999).default(10),
 }).strict();
 export const scriptSchema = z.object({
   name: z.string().trim().min(1).max(80),

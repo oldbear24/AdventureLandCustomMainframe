@@ -31,7 +31,10 @@ const browserType = {
         navigations.push(url.pathname);
         assert.match(route.request().headers().cookie || '', /auth=fixture-user-fixture-auth-secret/);
         const body = url.pathname.startsWith('/server/') ? `<script>window.user_id=${JSON.stringify(accountValid ? 'fixture-user' : '')}; window.X={characters:${JSON.stringify(owned ? [{ name: 'TestWarrior', online: alreadyOnline }] : [])},servers:[{region:'EU',name:'I'}]};</script>` : url.pathname.startsWith('/character/') ? `<!doctype html><body><script>
-          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40};window.sentTransfers=[];
+          window.character={name:'TestWarrior',ctype:'warrior',level:42,hp:1600,max_hp:2000,mp:320,max_mp:500,xp:5000,max_xp:20000,gold:1234567,items:[{name:'hpot0',q:10},{name:'sword',level:3,l:'l'}],slots:{mainhand:{name:'sword',level:5},helmet:null},map:'main',x:20,y:40,isize:42,party:'TestWarrior',s:{cursed:{ms:5000},mluck:{ms:60000,f:'Merchant'}}};window.sentTransfers=[];
+          window.G={conditions:{cursed:{name:'Cursed',debuff:true},mluck:{name:"Merchant's Luck",buff:true}},skills:{supershot:{name:'Super Shot',cooldown:30000},attack:{name:'Attack'}}};
+          window.next_skill={attack:new Date(Date.now()+400),supershot:new Date(Date.now()+20000)};
+          window.party={TestWarrior:{type:'warrior',level:42,map:'main',x:20,y:40},Healer:{type:'priest',level:40,map:'main',x:50,y:80}};
           window.entities={m1:{type:'monster',mtype:'goo',map:'main',x:60,y:40,target:'TestWarrior'},p1:{type:'character',name:'Stranger',map:'main',x:-30,y:10}};
           window.socket={connected:true};window.code_run=false;window.code_active=false;
           window.add_log=()=>{};window.add_codelog=()=>{};
@@ -171,6 +174,24 @@ try {
   assert.equal(await gamePage.evaluate(() => window.code_active), true);
   assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   assert.equal(await page.locator('.meter i').first().evaluate(element => Math.round(element.getBoundingClientRect().width / element.parentElement.getBoundingClientRect().width * 100)), 80);
+  // Telemetry: XP bar, effects, supplies, party overview, skill cooldowns and the potion alert (no MP potions).
+  await runtime.exclusive(() => runtime.tick());
+  await page.waitForFunction(() => document.querySelector('.meter.xp') && document.querySelector('.card-alerts .alert-potions') && document.querySelector('#party-panel:not([hidden]) .party-table'));
+  assert.match(await page.locator('.condition.debuff').textContent(), /Cursed/);
+  assert.match(await page.locator('.condition.buff').textContent(), /Merchant's Luck/);
+  assert.match(await page.locator('.supplies').textContent(), /HP 10 · MP 0/);
+  assert.match(await page.locator('#party-body').textContent(), /Healer.*priest.*EU I/s);
+  assert.match(await page.evaluate(() => document.title), /^\(1\) /);
+  assert.equal(await page.locator('.character-card.has-alert').count(), 1);
+  await page.locator('.card-more summary').click();
+  assert.match(await page.locator('.skill-list').textContent(), /Super Shot/);
+  const updated = await page.locator('#last-update').textContent();
+  await page.waitForFunction(previous => document.querySelector('#last-update').textContent !== previous, updated);
+  assert.equal(await page.locator('.card-more[open]').count(), 1, 'opened cooldowns survive the 5 s refresh');
+  await page.locator('#move-all').click();
+  assert.equal(await page.locator('#move-characters input:checked').count(), 1);
+  await page.locator('#close-move').click();
+  assert.equal(await page.locator('#start-all').isDisabled(), true);
   // Live map: own character, nearby monster/player, saved position of another character, doors switch maps.
   await runtime.exclusive(() => runtime.tick());
   await page.locator('[data-view-link=map]').click();
@@ -178,6 +199,8 @@ try {
   await page.waitForFunction(() => document.querySelector('#map-overlay .map-saved') && document.querySelector('#map-overlay .map-monster.targeting'));
   assert.match(await page.locator('#map-name').textContent(), /Mainland/);
   assert.equal(await page.locator('#map-overlay .map-player').count(), 1);
+  assert.equal(await page.locator('#map-overlay .map-effect.debuff').count(), 1);
+  assert.match(await page.locator('#map-characters').textContent(), /Cursed/);
   assert.match(await page.locator('#map-characters').textContent(), /TestWarrior.*SavedMage/s);
   await page.locator('#map-characters [data-follow]').click();
   await page.waitForFunction(() => document.querySelector('#map-nearby').textContent.includes('goo'));

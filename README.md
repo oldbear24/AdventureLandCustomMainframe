@@ -39,6 +39,12 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - API token „Connect an AI“: výpis postav účtu, import postav a synchronizace CODE slotů. Pro spouštění přiřazeného CODE je token potřebný.
 - **Živá mapa**: skutečné zdi, zóny monster, NPC a průchody každé mapy; pozice běžících postav se obnovují každých 5 sekund i s monstry a hráči v okolí. Postavu lze sledovat kamerou, mapu přibližovat kolečkem a posouvat tažením, kliknutím na průchod přejdeš na sousední mapu. S API tokenem vidíš i poslední uloženou pozici ostatních postav účtu.
 - **Inventáře a banka**: vybavení, inventář a zlato každé postavy s hledáním předmětů podle názvu. Běžící postava se čte živě, ostatní postavy a banka z uloženého stavu účtu přes API token (může být o něco starší). Pokud stojí běžící postava v bance, banka se čte živě. Geometrie map a názvy předmětů se stahují z veřejného `https://adventure.land/data.js` (ukládají se do paměti na 6 hodin).
+- **Upozornění na problémy**: karta postavy se zvýrazní a panel ukáže toast, když postava umře, dlouho nic nedělá, opakovaně padá do reconnectu, dojdou jí lektvary nebo se pozastaví CODE. Počet postav s problémem je i v titulku záložky. Volitelně se upozornění posílají na Discord nebo Telegram.
+- **XP a statistiky**: ukazatel XP do dalšího levelu, XP/h a gold/h za poslední hodinu, odhad času do dalšího levelu a malý graf. Historie se drží v paměti (vzorek jednou za minutu) a restartem serveru se vynuluje.
+- **Efekty, zásoby a cooldowny**: aktivní buffy a debuffy, počet lektvarů HP/MP, volná místa v inventáři a odpočet cooldownů použitých skillů (rozbalovací část karty).
+- **Party přehled**: kdo je v partě, na jakém serveru, na jaké mapě a jak daleko od leadera; vzdálenosti mezi postavami v panelu a varování, když běží na různých serverech.
+- **Detekce zamrzlého CODE**: postava bez pohybu, útoku, skillu, XP i změny zlata po nastavenou dobu je označená jako nečinná; volitelně se jí CODE automaticky znovu načte (↻ CODE).
+- **Dávkové akce**: Spustit vše, Zastavit vše a přesun vybraných postav na jiný server (běžící se zastaví, přesunou a znovu spustí).
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 200 záznamů, panel je posuvný).
 
@@ -189,6 +195,26 @@ V Adventure Land otevři Mainframe → **Connect an AI** → vytvoř nebo zobraz
 U postavy zvol **Přidat do panelu**, nastav region, server a svůj skript. Načtení seznamu samo žádnou postavu nespouští. Token a herní přihlášení jsou nezávislé: token slouží pro výpis a společné CODE sloty, herní relace pro vlastní běh postav. Používej obojí ze stejného herního účtu. Vlastnictví se před spuštěním ověřuje také vůči herní relaci, takže token jiného účtu nedovolí spustit jeho postavu přes tuto relaci.
 
 API token se ukládá šifrovaně do `api-token.enc.json` s klíčem `api-token.key` (práva 600). V API odpovědích, frontendovém stavu ani logu není jeho hodnota; panel ho po odeslání smaže z formuláře. Pro zálohu obnovuj oba soubory společně. **Odpojit API token** odstraní místní token a při další kontrole pozastaví propojený CODE; postavy mohou zůstat připojené. Token ve hře neodvolává. Odvolání proveď v Adventure Land. Používají se pouze `mainframe_list_characters`, `list_codes`, `get_code` a `save_code` na `https://adventure.land/mcp_api/`; integrace nevolá placené spuštění oficiálního Mainframu.
+
+## Upozornění a hlídání postav
+
+V **Nastavení** postavy nastavíš:
+
+- **Upozornit na nečinnost po (min)** – výchozí 10. Nečinnost je stav bez pohybu, útoku, použitého skillu, XP a změny zlata. `0` kontrolu vypne (hodí se pro merchanta, který stojí ve městě).
+- **Při nečinnosti automaticky znovu načíst CODE** – po uplynutí limitu se CODE načte znovu ze slotu, nejvýš jednou za každý další interval nečinnosti. Počet automatických restartů je vidět na kartě.
+- **Upozornit pod počet lektvarů** – výchozí 10; hlídá HP i MP lektvary (`hpot*`, `mpot*`) v inventáři. `0` kontrolu vypne.
+
+Smrt, opakovaný reconnect (dva neúspěšné pokusy za sebou) a pozastavený CODE se hlásí vždy. Každé nové upozornění se zapíše do logu, v panelu ukáže toast a zvýrazní kartu.
+
+Pro posílání mimo panel doplň do `.env` Discord webhook nebo Telegram bota a restartuj kontejner:
+
+```dotenv
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/…
+TELEGRAM_BOT_TOKEN=123456789:AA…
+TELEGRAM_CHAT_ID=123456789
+```
+
+Funkčnost ověříš v **Herní účet** → **Upozornění — Discord / Telegram** → **Poslat testovací upozornění**. Stejný typ upozornění se pro jednu postavu odešle nejvýš jednou za 15 minut a celkem nejvýš 30 zpráv za hodinu. Adresa webhooku ani token se nezobrazují v panelu ani v logu.
 
 ## Posílání zlata a předmětů
 

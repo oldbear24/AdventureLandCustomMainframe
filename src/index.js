@@ -6,12 +6,14 @@ import { createWebServer } from './server.js';
 import { GameAccount } from './game-account.js';
 import { GameApi } from './game-api.js';
 import { GameData } from './game-data.js';
+import { Notifier } from './notifier.js';
 
 const config = configFromEnv();
 for (const warning of config.warnings) console.warn(warning);
 const store = new Store(config.dataDir); await store.init();
 const gameApi = new GameApi(config); await gameApi.init();
 const runtime = new Runtime(config, store, undefined, gameApi);
+runtime.notifier = new Notifier(config.notifications, fetch, message => runtime.log(null, 'error', message));
 const account = new GameAccount(config, runtime); await account.init();
 const app = createApp(config, store, runtime, account, gameApi, new GameData());
 const server = await createWebServer(config, app);
