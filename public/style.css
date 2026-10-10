@@ -1,6 +1,7 @@
 :root{color-scheme:dark;--bg:#0b1010;--panel:#111a19;--panel-2:#0d1512;--line:#23322e;--line-strong:#34533d;--muted:#8c9f98;--faint:#6f897b;--accent:#bcf878;--accent-ink:#122015;--accent-soft:#1f3320;--warn:#ead390;--warn-soft:#332c17;--warn-line:#6d5d2a;--danger:#f6a297;--danger-soft:#3f2825;--info:#8fc3f5;--text:#ebf2ed;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:14px}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);line-height:1.45}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);line-height:1.45;overflow-wrap:break-word}
 [hidden]{display:none!important}
 button,input,select,textarea{font:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
@@ -285,7 +286,7 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .item-grid.equipment{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
 
 /* Dialogs and toast */
-dialog{color:var(--text);background:var(--panel);border:1px solid #3c5540;border-radius:10px;max-width:480px;width:calc(100% - 30px);padding:22px;max-height:90vh;overflow:auto}
+dialog{color:var(--text);background:var(--panel);border:1px solid #3c5540;border-radius:10px;max-width:480px;width:calc(100% - 30px);padding:22px;max-height:90vh;max-height:90dvh;overflow:auto}
 dialog::backdrop{background:#000b;backdrop-filter:blur(4px)}
 dialog .primary{width:100%}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:15px}
@@ -319,7 +320,7 @@ dialog .storage-actions .primary{width:auto}
 
 /* Automation */
 .automation-intro{max-width:900px}
-.automation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px;align-items:start}
+.automation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr));gap:14px;align-items:start}
 .automation-card{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0;scroll-margin-top:16px}
 .automation-card.is-running{border-color:var(--line-strong)}
 .automation-card.highlight{box-shadow:0 0 0 2px var(--accent)}
@@ -403,7 +404,7 @@ dialog .storage-actions .primary{width:auto}
   .editor-layout{grid-template-columns:1fr}
   .script-sidebar{grid-template-columns:1fr 1fr}
   .map-layout,.inventory-layout{grid-template-columns:1fr}
-  .map-canvas{height:60vh}
+  .map-canvas{height:60vh;min-height:min(420px,75vh)}
 }
 @media(max-width:900px){
   aside{position:static;width:auto;border-right:0;border-bottom:1px solid var(--line);padding:14px 16px;gap:12px}
@@ -419,10 +420,49 @@ dialog .storage-actions .primary{width:auto}
   .stats>div:nth-child(2){border-right:0}
   .stats>div:nth-child(-n+2){border-bottom:1px solid var(--line)}
   .logs{height:60vh}
+  /* iOS zooms into any field with text under 16px and leaves the page zoomed in. */
+  input,select,textarea{font-size:16px}
+  .editor-panel textarea{font-size:14px;min-height:50vh}
+  .log-tools select{min-width:0;flex:1}
+  #toast{left:12px;right:12px;bottom:12px;max-width:none}
 }
 @media(max-width:600px){
   h1{font-size:23px}
   .nav-link span{display:none}
+  .page-head{align-items:stretch}
+  .page-head>div:first-child{min-width:0}
+  #view-overview .head-actions{display:grid;grid-template-columns:1fr 1fr;width:100%;gap:6px}
+  #view-overview .head-actions button{padding:9px 8px;font-size:13px}
+  #view-overview .head-actions .primary{grid-column:1/-1}
+  .inventory-tools,.log-tools{width:100%}
+  .stats>div{padding:12px 14px;min-width:0}
+  .stats strong{font-size:20px;overflow-wrap:anywhere}
+  .stats .status-value{font-size:16px;line-height:24px}
+  .character-card{padding:14px}
+  .card-head{flex-wrap:wrap}
+  .owned-row{flex-wrap:wrap}
+  .party-table thead{display:none}
+  .party-table,.party-table tbody,.party-table tr,.party-table td{display:block}
+  .party-table tr{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .party-table td{padding:0;border:0;white-space:normal;min-width:0}
+  .party-table td:first-child{grid-column:1/-1}
+  .party-table td[data-label]::before{content:attr(data-label);display:block;font:9px Consolas,monospace;letter-spacing:1px;color:var(--faint);text-transform:uppercase}
+  .editing-header{flex-wrap:wrap}
+  .editor-footer>span{min-width:0;flex-basis:100%}
+  .editor-buttons{width:100%}
+  .editor-buttons button{flex:1}
+  .map-head,.map-zoom{width:100%}
+  .map-zoom button{flex:1}
+  .log-panel{padding:10px}
+  .logs{padding:10px}
+  .auto-now{padding:10px}
+  .auto-mode{width:54px}
+  .automation-help pre{white-space:pre-wrap;overflow-wrap:anywhere}
+  dialog{width:calc(100% - 16px);padding:16px}
+  .storage-tools{flex-wrap:wrap}
+  .storage-tools input{flex-basis:100%}
+  .storage-tools button{flex:1}
+  .storage-actions{flex-wrap:wrap}
   .script-sidebar{grid-template-columns:1fr}
   .character-grid,.automation-grid{grid-template-columns:1fr}
   .auto-vitals{grid-template-columns:1fr}
