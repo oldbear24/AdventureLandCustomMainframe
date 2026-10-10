@@ -16,6 +16,7 @@ import { GameApi } from '../src/game-api.js';
 import { GameData } from '../src/game-data.js';
 import { attachLive } from '../src/live.js';
 import { History } from '../src/history.js';
+import { SystemMonitor } from '../src/system.js';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-browser-'));
 const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', DATA_DIR: directory });
@@ -105,7 +106,8 @@ const gameData = new GameData(async url => {
   if (url === `${GAME_ORIGIN}/images/tiles/items/pack_20vt8.png`) return new Response(iconSheet());
   assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`);
 });
-const app = createApp(config, store, runtime, account, gameApi, gameData);
+const system = new SystemMonitor(config, runtime);
+const app = createApp(config, store, runtime, account, gameApi, gameData, system);
 const server = await createWebServer(config, app); const live = attachLive(server, app, runtime); server.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `https://127.0.0.1:${server.address().port}`;
 await mkdir('test-results', { recursive: true });
@@ -321,6 +323,15 @@ try {
   assert.match(await page.locator('#monster-detail').textContent(), /Základní zlato20.*Mainland.*Short Sword0,1 % \(1 : 1\s000\)/s);
   await page.locator('#close-monster').click();
   await page.screenshot({ path: 'test-results/monsters-desktop.png', fullPage: true });
+  // System: container, Chromium and data volume usage, and the running character's browser metrics over DevTools.
+  await system.sample(); await new Promise(resolve => setTimeout(resolve, 300)); await system.sample();
+  await page.locator('[data-nav=system]').click();
+  await page.waitForFunction(() => document.querySelector('#system-characters tbody'));
+  assert.match(await page.locator('#system-tiles').textContent(), /CPU KONTEJNERU.*PAMĚŤ.*CHROMIUM.*\d+ procesů.*DATA/s);
+  assert.match(await page.locator('#system-characters tbody tr').first().textContent(), /TestWarrior.*ONLINE.*\d+(,\d)? MB/s);
+  assert.equal(await page.locator('#system-memory svg path.line').count(), 1);
+  assert.match(await page.locator('#system-host').textContent(), new RegExp(`Node.js${process.version.replaceAll('.', '\\.')}`));
+  await page.screenshot({ path: 'test-results/system-desktop.png', fullPage: true });
   // Events: the server's bosses and events as the running character's game client sees them.
   await page.locator('[data-nav=events]').click();
   await page.waitForFunction(() => document.querySelector('[data-realm="EU I"] [data-event=franky]'));

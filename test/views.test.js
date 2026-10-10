@@ -126,7 +126,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí'], ['/monsters', 'monsters', 'Kde farmit']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí'], ['/monsters', 'monsters', 'Kde farmit'], ['/system', 'system', 'Systém']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -140,6 +140,7 @@ test('each panel page is the shared shell around its own fragment and script', a
   assert.doesNotMatch(await (await fetch(`${f.origin}/map`)).text(), /id="transfer-dialog"/);
   assert.equal((await fetch(`${f.origin}/js/map.js`)).status, 200);
   assert.equal((await fetch(`${f.origin}/index.html`)).status, 404);
+  assert.equal((await f.request('/api/system')).status, 503, 'without a system monitor');
 });
 test('saved inventories and bank come from the API token without leaking extra fields', async t => {
   const calls = [];

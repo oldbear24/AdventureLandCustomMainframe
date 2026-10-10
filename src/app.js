@@ -15,7 +15,7 @@ const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
 const PAGES = {
   '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
-  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/journal': ['journal', 'Deník · '], '/monsters': ['monsters', 'Kde farmit · '], '/events': ['events', 'Události · '],
+  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/journal': ['journal', 'Deník · '], '/monsters': ['monsters', 'Kde farmit · '], '/system': ['system', 'Systém · '], '/events': ['events', 'Události · '],
 };
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
@@ -26,7 +26,7 @@ async function renderPage(page, title) {
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-export function createApp(config, store, runtime, account = null, gameApi = null, gameData = null) {
+export function createApp(config, store, runtime, account = null, gameApi = null, gameData = null, system = null) {
   const app = express(); app.disable('x-powered-by');
   const transfers = new Transfers(runtime);
   const sessions = new Map(), attempts = new Map(), gameAttempts = new Map();
@@ -241,6 +241,11 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (age < (req.query.refresh === '1' ? 10_000 : 60_000)) return res.json(itemsCache.body);
     itemsLoading ||= collectItems().then(body => { itemsCache = { at: Date.now(), body }; return body; }).finally(() => { itemsLoading = null; });
     res.json(await itemsLoading);
+  });
+  // CPU and memory of the panel, Chromium and the container, the data volume and per-character browser metrics.
+  app.get('/api/system', async (_req, res) => {
+    if (!system) throw new HttpError(503, 'Přehled systému není dostupný.');
+    res.json(await system.report());
   });
   // The persistent journal, newest first; after polls for new entries, before pages back.
   app.get('/api/journal', (req, res) => {

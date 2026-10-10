@@ -1,0 +1,11 @@
+      <section id="view-system" class="view" aria-labelledby="system-title">
+        <header class="page-head"><div><p class="eyebrow">SERVER</p><h1 id="system-title">Systém <span class="live-dot"></span></h1></div><p id="system-updated" class="fine"></p></header>
+        <section id="system-tiles" class="stats" aria-label="Využití prostředků"></section>
+        <div class="chart-grid">
+          <section class="surface chart-card" aria-labelledby="system-cpu-title"><h2 id="system-cpu-title">CPU</h2><p id="system-cpu-note" class="fine">Posledních 15 minut, vzorek každých 10 sekund; 100 % = jedno jádro</p><div id="system-cpu" class="chart small-chart"></div></section>
+          <section class="surface chart-card" aria-labelledby="system-memory-title"><h2 id="system-memory-title">Paměť</h2><p id="system-memory-note" class="fine">Posledních 15 minut</p><div id="system-memory" class="chart small-chart"></div></section>
+        </div>
+        <section class="surface" aria-labelledby="system-characters-title"><div class="section-head compact"><div><h2 id="system-characters-title">Prohlížeče postav</h2><p>Každá postava běží ve vlastním kontextu Chromia; paměť JavaScriptu a počet prvků stránky čte panel přes DevTools protokol.</p></div></div><div id="system-characters" class="table-wrap"></div></section>
+        <section class="surface" aria-labelledby="system-host-title"><div class="section-head compact"><h2 id="system-host-title">Server a data</h2></div><div id="system-host" class="system-facts"></div></section>
+        <div id="system-tip" class="chart-tip" role="tooltip" hidden></div>
+      </section>

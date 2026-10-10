@@ -334,6 +334,18 @@ a.journal-who:hover{color:var(--accent)}
 .stats-table td.negative{color:var(--danger)}
 .series-key{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:8px;vertical-align:middle}
 
+/* System */
+.small-chart{min-height:150px}
+.chart .area{fill:var(--series-1);opacity:.1}
+#view-system .chart .line{stroke:var(--series-1)}
+#view-system .chart .end-dot{fill:var(--series-1)}
+.system-meter{margin-top:10px}
+.system-meter.warn i{background:var(--warn)}.system-meter.danger i{background:var(--danger)}
+.system-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px 18px}
+.system-facts small{display:block;font:10px Consolas,monospace;letter-spacing:1px;color:var(--faint);text-transform:uppercase}
+.system-facts strong{display:block;font-size:13px;font-weight:550;margin-top:3px;overflow-wrap:anywhere}
+#view-system .page-head .fine{margin:0}
+
 /* Items */
 .items-filters{display:grid;grid-template-columns:minmax(200px,2fr) repeat(5,minmax(130px,1fr));gap:12px;padding:14px 16px}
 .items-filters label{margin:0 0 6px}
