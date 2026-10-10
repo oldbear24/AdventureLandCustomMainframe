@@ -67,36 +67,52 @@ function zoom(factor, screenX = width / 2, screenY = height / 2) {
 }
 
 // Movement is replayed from timestamped samples. The game page samples positions every 250 ms and the server
-// sends them in 200 ms batches, so they arrive unevenly; drawing each marker where it was DELAY ms ago,
+// sends them in 200 ms batches, so they arrive unevenly; drawing each marker where it was a moment ago,
 // interpolated between the samples around that moment, keeps the pace of the game without stops or jumps.
-const DELAY = 500, JUMP = 400, STEP = 250;
-// key -> { samples: [{ t, x, y }], x, y, entity?, gone? }; entities are keyed by their game id, so the same
-// monster reported by several characters stays one marker.
+// The delay covers how unevenly samples arrive, so the next sample is there before the replay needs it.
+const MIN_DELAY = 450, MAX_DELAY = 1500, JUMP = 400, STEP = 250, SOURCE_TIMEOUT = 1000;
+// key -> { samples: [{ t, x, y }], x, y, source, sourceAt, entity?, gone? }; entities are keyed by their game id,
+// so the same monster reported by several characters stays one marker.
 const markers = new Map();
 // Server clock minus this browser's, from the fastest recent delivery; it makes clock skew irrelevant.
-let clockOffset = null, clockSamples = [], replayAt = 0;
+// How much slower most deliveries are sets the delay; the slowest tenth is left out, as the first state after
+// opening the page may have been sampled long ago when nothing changed since.
+let clockOffset = null, clockSpread = 0, clockSamples = [], replayAt = null, replayWall = 0;
 const lastSampled = new Map();
 function noteSample(sessionId, at) {
-  if (lastSampled.get(sessionId) === at) return;
+  // Only newer states count; an older one (e.g. from a dashboard poll) would look like a slow delivery.
+  if (at <= (lastSampled.get(sessionId) ?? -Infinity)) return;
   lastSampled.set(sessionId, at);
   const now = Date.now();
   clockSamples = clockSamples.filter(([when]) => now - when < 10_000);
   clockSamples.push([now, now - at]);
-  clockOffset = Math.min(...clockSamples.map(([, offset]) => offset));
+  const offsets = clockSamples.map(([, offset]) => offset).sort((a, b) => a - b);
+  clockOffset = offsets[0]; clockSpread = offsets[Math.floor((offsets.length - 1) * 0.9)] - clockOffset;
 }
-// The replayed moment in server time; it never runs backwards.
+// The replayed moment in server time. It runs with the wall clock and drifts towards the target by at most a tenth
+// of the elapsed time, so a new clock offset or delay changes the pace slightly instead of moving every marker at once.
 function replayTime() {
   if (clockOffset === null) return 0;
-  replayAt = Math.max(replayAt, Date.now() - clockOffset - DELAY);
+  const now = Date.now(), delay = Math.min(MAX_DELAY, Math.max(MIN_DELAY, clockSpread + STEP + 100)), target = now - clockOffset - delay;
+  if (replayAt === null || Math.abs(target - replayAt) > 2000) { replayAt = target; replayWall = now; return replayAt; }
+  const elapsed = Math.max(0, now - replayWall), error = target - (replayAt + elapsed);
+  replayAt += elapsed + Math.max(-elapsed / 10, Math.min(elapsed / 10, error)); replayWall = now;
   return replayAt;
 }
-function addSample(key, t, x, y) {
+// Each character's game client estimates other entities' positions on its own, a few pixels apart, so mixing
+// their reports would zig-zag; a marker follows one reporting character until it stops reporting.
+function addSample(key, t, x, y, source = key) {
   let marker = markers.get(key);
-  if (!marker) { marker = { samples: [], x, y }; markers.set(key, marker); }
+  if (!marker) { marker = { samples: [], x, y, source, sourceAt: t }; markers.set(key, marker); }
   marker.gone = false;
+  if (marker.source !== source) {
+    if (t - marker.sourceAt < SOURCE_TIMEOUT) return marker;
+    marker.source = source;
+  }
+  marker.sourceAt = Math.max(marker.sourceAt, t);
   const samples = marker.samples, last = samples.at(-1);
   if (last && t <= last.t) {
-    // An older report (e.g. from another character) is slotted in place; a known moment is skipped.
+    // An older report is slotted in place; a known moment is skipped.
     if (samples.some(sample => sample.t === t)) return marker;
     samples.splice(samples.findIndex(sample => sample.t > t), 0, { t, x, y });
     return marker;
@@ -148,7 +164,7 @@ function sync() {
     for (const entity of s.state.nearby || []) {
       if (ownNames.has(entity.name)) continue;
       const key = `e:${entity.id || `${entity.kind}:${entity.name}:${entity.x}:${entity.y}`}`;
-      addSample(key, s.state.at ?? Date.now(), entity.x, entity.y).entity = entity;
+      addSample(key, s.state.at ?? Date.now(), entity.x, entity.y, s.id).entity = entity;
       entities.set(key, { ...entity, key });
     }
   }
