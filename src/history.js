@@ -143,9 +143,8 @@ export class History extends EventEmitter {
     for (let i = this.journal.length - 1; i >= 0 && out.length <= limit; i--) if (matches(this.journal[i])) out.push(this.journal[i]);
     return { entries: out.slice(0, limit), more: out.length > limit };
   }
-  // Long-term stats of every character with samples over the last rangeMs, bucketed by bucketMs.
-  stats(rangeMs, bucketMs, limit = 240) {
-    const to = this.now(), from = to - rangeMs;
+  // Long-term stats of every character with samples between from and to, bucketed by bucketMs.
+  stats(from, to, bucketMs, limit = 240) {
     return [...this.samples].map(([id, { name, points }]) => {
       const entries = this.journal.filter(e => e.characterId === id);
       const summary = summarizeHistory(points, entries, from, to);

@@ -1,4 +1,4 @@
-:root{color-scheme:dark;--bg:#0b1010;--panel:#111a19;--panel-2:#0d1512;--line:#23322e;--line-strong:#34533d;--muted:#8c9f98;--faint:#6f897b;--accent:#bcf878;--accent-ink:#122015;--accent-soft:#1f3320;--warn:#ead390;--warn-soft:#332c17;--warn-line:#6d5d2a;--danger:#f6a297;--danger-soft:#3f2825;--info:#8fc3f5;--text:#ebf2ed;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:14px}
+:root{color-scheme:dark;--bg:#0b1010;--panel:#111a19;--panel-2:#0d1512;--line:#23322e;--line-strong:#34533d;--muted:#8c9f98;--faint:#6f897b;--accent:#bcf878;--accent-ink:#122015;--accent-soft:#1f3320;--warn:#ead390;--warn-soft:#332c17;--warn-line:#6d5d2a;--danger:#f6a297;--danger-soft:#3f2825;--info:#8fc3f5;--text:#ebf2ed;--series-1:#3987e5;--series-2:#d95926;--series-3:#199e70;--series-4:#c98500;--series-5:#d55181;--series-6:#008300;--series-7:#9085e9;--series-8:#e66767;--series-other:#6f897b;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:14px}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);line-height:1.45}
 [hidden]{display:none!important}
@@ -280,6 +280,41 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .item-stats td{text-align:right;font:13px Consolas,monospace;color:var(--text);padding:5px 0;border-top:1px solid var(--line)}
 .item-grid.equipment{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
 
+/* Stats */
+.range-tabs{display:flex;gap:4px;flex-wrap:wrap}
+.range-tabs button{padding:8px 12px;font-size:12px}
+.range-tabs button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--line-strong);color:var(--accent)}
+.stats-body{display:grid;gap:18px;transition:opacity .2s}
+.stats-body.refreshing{opacity:.6}
+.stats-body>*,.chart-grid>*{min-width:0}
+.chart-legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:#c3d0c9}
+.chart-legend span{display:flex;align-items:center;gap:7px}
+.chart-legend i{display:inline-block;width:14px;height:3px;border-radius:2px}
+.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.chart-card h2{margin-bottom:2px}
+.chart-card .fine{margin:0 0 10px}
+.chart{min-height:230px;position:relative}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .baseline{stroke:#3a4c44;stroke-width:1}
+.chart .tick{fill:var(--faint);font:10px Consolas,monospace;font-variant-numeric:tabular-nums}
+.chart .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .end-dot{stroke:var(--panel);stroke-width:2}
+.chart .crosshair{stroke:#9cb1a5;stroke-width:1}
+.chart .hit,.chart .hit-col{fill:transparent;pointer-events:all;outline:none}
+.chart .column{outline:none;cursor:default}
+.chart .column:hover path,.chart .column:focus path{filter:brightness(1.25)}
+.chart .column:focus .hit-col,.chart .hit:focus{stroke:var(--accent);stroke-width:1}
+.chart-tip{position:fixed;z-index:30;min-width:160px;max-width:300px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:7px;background:#0d1512f2;box-shadow:0 8px 30px #0008;font-size:12px;pointer-events:none}
+.tip-title{color:var(--muted);font-size:11px;margin-bottom:5px}
+.tip-row{display:grid;grid-template-columns:12px auto 1fr;align-items:center;gap:7px;padding:1px 0}
+.tip-row i{width:12px;height:2px;border-radius:1px}
+.tip-row strong{font-variant-numeric:tabular-nums;color:var(--text)}
+.tip-row span{color:var(--muted);overflow-wrap:anywhere}
+.stats-table td{font-variant-numeric:tabular-nums}
+.stats-table td.negative{color:var(--danger)}
+.series-key{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:8px;vertical-align:middle}
+
 /* Items */
 .items-filters{display:grid;grid-template-columns:minmax(200px,2fr) repeat(5,minmax(130px,1fr));gap:12px;padding:14px 16px}
 .items-filters label{margin:0 0 6px}
@@ -356,6 +391,7 @@ dialog .storage-actions .primary{width:auto}
   .script-sidebar{grid-template-columns:1fr 1fr}
   .map-layout,.inventory-layout{grid-template-columns:1fr}
   .items-filters{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .chart-grid{grid-template-columns:1fr}
   .items-search{grid-column:1/-1}
   .map-canvas{height:60vh}
 }

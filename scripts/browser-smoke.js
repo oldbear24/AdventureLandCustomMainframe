@@ -15,6 +15,7 @@ import { GameAccount } from '../src/game-account.js';
 import { GameApi } from '../src/game-api.js';
 import { GameData } from '../src/game-data.js';
 import { attachLive } from '../src/live.js';
+import { History } from '../src/history.js';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-browser-'));
 const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', DATA_DIR: directory });
@@ -52,6 +53,18 @@ const browserType = {
   },
 };
 const runtime = new Runtime(config, store, browserType);
+runtime.history = new History(directory); await runtime.history.init();
+// A day of five-minute samples for two former characters, with an hour offline, for the stats page.
+{
+  const now = Date.now();
+  for (const [id, name, rate] of [['seed-alpha', 'Alpha', 900], ['seed-beta', 'Beta', 400]]) {
+    const points = [];
+    for (let i = 288; i >= 1; i--) if (name !== 'Beta' || i < 100 || i > 112) points.push([now - i * 300_000, 40, (288 - i) * rate, 400_000, 1000 + (288 - i) * 7]);
+    runtime.history.samples.set(id, { name, points });
+  }
+  runtime.history.journal.push({ id: 1, at: now - 3_600_000, type: 'death', characterId: 'seed-beta', name: 'Beta', message: 'Postava zemřela.', realm: null });
+  runtime.history.nextId = 2;
+}
 const account = new GameAccount(config, runtime, async (url, options) => {
   assert.equal(url, `${GAME_ORIGIN}/api/signup_or_login`);
   assert.equal(JSON.parse(options.body).only_login, true);
@@ -250,6 +263,31 @@ try {
   assert.equal(await page.locator('#log-filter').inputValue(), store.snapshot().characters[0].id);
   await gamePage.evaluate(() => console.log('live log line'));
   await page.waitForFunction(() => document.querySelector('#logs').textContent.includes('live log line'), null, { timeout: 3000 });
+  // Stats: long-term XP and gold from the persistent samples, with hover readouts and a summary table.
+  await page.locator('[data-nav=stats]').click();
+  await page.waitForFunction(() => document.querySelector('#stats-table tbody'));
+  assert.match(await page.locator('#stats-table tr[data-character=seed-beta]').textContent(), /^Beta40/);
+  assert.equal(await page.locator('#chart-xp path.line').count(), await page.locator('#stats-table tbody tr').count());
+  // Beta was offline for an hour: its line has two segments; Alpha ran the whole day.
+  assert.equal((await page.locator('#chart-xp path.line[data-series=Beta]').getAttribute('d')).split('M').length - 1, 2);
+  assert.equal((await page.locator('#chart-xp path.line[data-series=Alpha]').getAttribute('d')).split('M').length - 1, 1);
+  const xpBox = await page.locator('#chart-xp .hit').boundingBox();
+  await page.mouse.move(xpBox.x + xpBox.width * 0.5, xpBox.y + 40);
+  await page.waitForFunction(() => !document.getElementById('chart-tip').hidden);
+  assert.match(await page.locator('#chart-tip').textContent(), /XP.*Alpha/s);
+  const column = await page.locator('#chart-bars .column').last().boundingBox();
+  await page.mouse.move(column.x + column.width / 2, column.y + column.height - 3);
+  await page.waitForFunction(() => document.getElementById('chart-tip').textContent.includes('celkem'));
+  await page.screenshot({ path: 'test-results/stats-desktop.png', fullPage: true });
+  await page.locator('[data-range="7d"]').click();
+  await page.waitForFunction(() => document.getElementById('chart-bars-title').textContent === 'XP za den');
+  assert.match(page.url(), /range=7d/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Charts are drawn again for the new width once resizing settles.
+  await page.waitForFunction(() => Number(document.querySelector('#chart-xp svg').getAttribute('width')) < 390);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.screenshot({ path: 'test-results/stats-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1100 });
   // Events: the server's bosses and events as the running character's game client sees them.
   await page.locator('[data-nav=events]').click();
   await page.waitForFunction(() => document.querySelector('[data-realm="EU I"] [data-event=franky]'));

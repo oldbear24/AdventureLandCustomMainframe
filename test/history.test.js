@@ -38,13 +38,13 @@ test('journal entries and samples persist across restarts and are bounded', asyn
   assert.deepEqual(restored.query({ types: ['start'] }).entries.map(e => e.message), ['Spuštěno.']);
   assert.equal(restored.query({ after: 1 }).entries.length, 1);
   assert.equal(restored.query({ limit: 1 }).more, true);
-  const [stats] = restored.stats(86_400_000, 3_600_000);
+  const [stats] = restored.stats(now - 86_400_000, now, 3_600_000);
   // 900 XP to finish level 10, then 50 into level 11.
   assert.equal(stats.name, 'Runner'); assert.equal(stats.xpGained, 950); assert.equal(stats.goldChange, 4); assert.equal(stats.levels, 1);
   assert.equal(stats.buckets.reduce((sum, b) => sum + b.xp, 0), 950);
   // Entries older than 30 days and samples older than 14 days are dropped.
   now += 31 * 86_400_000; restored.prune();
-  assert.equal(restored.query().entries.length, 0); assert.equal(restored.stats(86_400_000, 3_600_000).length, 0);
+  assert.equal(restored.query().entries.length, 0); assert.equal(restored.stats(now - 86_400_000, now, 3_600_000).length, 0);
   for (let i = 0; i < JOURNAL_LIMIT + 5; i++) restored.record({ type: 'stop', message: String(i) });
   assert.equal(restored.journal.length, JOURNAL_LIMIT);
 });

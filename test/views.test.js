@@ -10,6 +10,7 @@ import { createServer } from 'node:http';
 import { WebSocket } from 'ws';
 import { Runtime, STORAGE_VALUE_LIMIT, sanitizeState, storageView } from '../src/runtime.js';
 import { attachLive } from '../src/live.js';
+import { History } from '../src/history.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
 import { createApp } from '../src/app.js';
@@ -115,7 +116,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -220,6 +221,26 @@ test('the items endpoint reads every account character and the bank once a minut
   const before = calls.length;
   await f.request('/api/items'); await f.request('/api/items?refresh=1');
   assert.equal(calls.length, before, 'cached for a minute and a refresh at most every 10 seconds');
+});
+
+test('long-term stats are bucketed by the viewer\'s hours and days', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.deepEqual((await f.request('/api/history/stats')).data.characters, []);
+  assert.equal((await f.request('/api/history/stats')).data.available, false);
+  const now = Date.now();
+  f.runtime.history = new History(null, () => {}, () => now);
+  f.runtime.history.samples.set('id-1', { name: 'Runner', points: [[now - 2 * 3_600_000, 5, 0, 100, 10], [now - 2 * 3_600_000 + 300_000, 5, 50, 100, 30], [now - 3_600_000, 6, 10, 200, 40]] });
+  const day = await f.request('/api/history/stats?range=24h&offset=120');
+  assert.equal(day.status, 200); assert.equal(day.data.available, true);
+  assert.equal(day.data.bucketMs, 3_600_000); assert.equal(day.data.to - day.data.from, 86_400_000);
+  assert.equal((day.data.to + 120 * 60_000) % 3_600_000, 0, 'buckets end on a whole hour of the viewer');
+  const [runner] = day.data.characters;
+  assert.equal(runner.xpGained, 50); assert.equal(runner.buckets.length, 24); assert.equal(runner.series.length, 3);
+  const week = await f.request('/api/history/stats?range=7d&offset=-300');
+  assert.equal(week.data.bucketMs, 86_400_000); assert.equal((week.data.to - 300 * 60_000) % 86_400_000, 0);
+  assert.equal((await f.request('/api/history/stats?range=1y')).status, 400);
+  assert.equal((await f.request('/api/history/stats?offset=9999')).status, 400);
+  f.runtime.history = null;
 });
 
 test('server events list realms and save which events notify', async t => {

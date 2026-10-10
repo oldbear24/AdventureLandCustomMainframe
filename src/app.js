@@ -14,7 +14,7 @@ const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
 const PAGES = {
   '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
-  '/items': ['items', 'Předměty · '], '/events': ['events', 'Události · '],
+  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/events': ['events', 'Události · '],
 };
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
@@ -235,6 +235,14 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (age < (req.query.refresh === '1' ? 10_000 : 60_000)) return res.json(itemsCache.body);
     itemsLoading ||= collectItems().then(body => { itemsCache = { at: Date.now(), body }; return body; }).finally(() => { itemsLoading = null; });
     res.json(await itemsLoading);
+  });
+  // Long-term XP/gold stats from the persistent samples. Buckets end at the next whole hour or day of the viewer's time zone.
+  const RANGES = { '24h': [86_400_000, 3_600_000], '3d': [3 * 86_400_000, 6 * 3_600_000], '7d': [7 * 86_400_000, 86_400_000], '14d': [14 * 86_400_000, 86_400_000] };
+  app.get('/api/history/stats', (req, res) => {
+    const { range, offset } = z.object({ range: z.enum(Object.keys(RANGES)).default('24h'), offset: z.coerce.number().int().min(-840).max(840).default(0) }).parse(req.query);
+    const [span, bucket] = RANGES[range], now = Date.now(), shift = offset * 60_000;
+    const to = Math.ceil((now + shift) / bucket) * bucket - shift, from = to - span;
+    res.json({ now, range, from, to, bucketMs: bucket, available: !!runtime.history, characters: runtime.history ? runtime.history.stats(from, to, bucket) : [] });
   });
   // Bosses and server events seen by running characters, one reading per realm, and which of them notify.
   app.get('/api/server-events', async (_req, res) => {
