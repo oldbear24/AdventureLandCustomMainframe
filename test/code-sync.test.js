@@ -16,14 +16,14 @@ async function fixture(t) {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-code-sync-'));
   const config = configFromEnv({ ADMIN_PASSWORD: 'fixture-password-long-enough', DATA_DIR: directory, AL_AUTH_COOKIE: 'fixture-cookie' });
   const store = new Store(directory); await store.init();
-  const cloud = { code: { slot: '1', name: 'Shared farm', version: 1, code: 'console.log("cloud v1");' }, available: true, writes: 0, modules: [] };
+  const cloud = { code: { slot: '1', name: 'Shared farm', version: 1, code: 'console.log("cloud v1");' }, available: true, writes: 0, modules: [], defaultSlot: '1' };
   const api = new GameApi(config, async (url, options) => {
     const input = JSON.parse(options.body); assert.equal(input.token, `mcp_${'a'.repeat(43)}`);
     if (!cloud.available) throw new Error('Fixture offline');
     const method = url.slice(url.lastIndexOf('/') + 1);
-    if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'Warrior', character_id: 'CH_warrior', level: 50, class: 'warrior', assignment: { code_slot: '1', server: 'EU I' } }] });
+    if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'Warrior', character_id: 'CH_warrior', level: 50, class: 'warrior', assignment: { code_slot: cloud.defaultSlot, server: 'EU I' } }] });
     if (method === 'list_codes') return Response.json({ success: true, codes: [...(cloud.code ? [{ slot: '1', name: cloud.code.name, version: cloud.code.version }] : []), ...cloud.modules] });
-    if (method === 'get_code') return Response.json(cloud.code ? { success: true, code: { ...cloud.code } } : { failed: true, reason: 'not_found' });
+    if (method === 'get_code') return Response.json(cloud.code && input.slot === '1' ? { success: true, code: { ...cloud.code } } : { failed: true, reason: 'not_found' });
     if (method === 'save_code') { cloud.writes++; cloud.code = { ...cloud.code, code: input.code, name: input.name, version: cloud.code.version + 1 }; return Response.json({ success: true, code: { slot: '1', version: cloud.code.version } }); }
     throw new Error('Unexpected live method');
   }); await api.init(); await api.vault.save({ cookie: `mcp_${'a'.repeat(43)}` });
@@ -137,22 +137,38 @@ test('start downloads the slot before connecting and refuses to connect when the
   assert.equal(f.store.snapshot().scripts[0].source, f.cloud.code.code); assert.equal(launches, 1);
   assert.ok(runtime.logs.some(l => l.message.includes('CODE stažen ze slotu 1 (verze 4)')));
 });
-test('start without assigned CODE detects, downloads and assigns the character default slot', async t => {
+test('automatic CODE downloads the latest default slot at every start and reconnect without assigning it', async t => {
   const f = await fixture(t);
   const runtime = new Runtime(f.runtime.config, f.store, { launch: async () => { throw new Error('No browser in tests'); } }, f.api);
   t.after(() => runtime.close());
   const id = randomUUID();
   await f.store.update(state => state.characters.push({ id, name: 'warrior', region: 'EU', server: 'I', scriptId: null, autoStart: false }));
   await runtime.start(id);
-  const character = f.store.snapshot().characters.find(c => c.id === id), script = f.store.snapshot().scripts.find(s => s.id === character.scriptId);
+  const script = f.store.snapshot().scripts.find(s => s.id === runtime.sessions.get(id).scriptId);
   assert.equal(script.remoteSlot, '1'); assert.equal(script.source, f.cloud.code.code);
-  assert.ok(runtime.logs.some(l => l.message.includes('Detekován výchozí CODE postavy: slot 1')));
+  assert.equal(runtime.snapshot()[0].scriptId, script.id);
+  // The character keeps automatic CODE, so the saved settings do not change.
+  assert.equal(f.store.snapshot().characters.find(c => c.id === id).scriptId, null);
+  assert.ok(runtime.logs.some(l => l.message.includes('Výchozí CODE postavy: slot 1')));
+  // A running character holds its default slot: it cannot be deleted.
+  f.runtime.sessions.set(id, runtime.sessions.get(id));
+  assert.equal((await f.request(`/api/scripts/${script.id}`, 'DELETE', {})).status, 409);
+  f.runtime.sessions.delete(id);
+  // A reconnect downloads the newest version of the default slot.
+  f.cloud.code = { ...f.cloud.code, version: 7, code: 'console.log("v7");' };
+  runtime.sessions.get(id).nextRetry = 0; await runtime.tick();
+  assert.equal(f.store.snapshot().scripts[0].source, 'console.log("v7");'); assert.equal(runtime.sessions.get(id).scriptId, script.id);
+  // A reconnect also follows a changed default slot; here the character no longer has one.
+  f.cloud.defaultSlot = 'missing';
+  runtime.sessions.get(id).nextRetry = 0; await runtime.tick();
+  assert.equal(runtime.sessions.get(id).scriptId, null);
   await runtime.stop(id);
   // The slot is reused, not duplicated, and an empty default slot starts without CODE.
-  await f.store.update(state => { state.characters.find(c => c.id === id).scriptId = null; });
+  f.cloud.defaultSlot = '1';
   await runtime.start(id); await runtime.stop(id); assert.equal(f.store.snapshot().scripts.length, 1);
-  await f.store.update(state => { state.characters.find(c => c.id === id).scriptId = null; }); f.cloud.code = null;
+  f.cloud.code = null;
   await runtime.start(id);
+  assert.equal(runtime.sessions.get(id).scriptId, null);
   assert.equal(f.store.snapshot().characters.find(c => c.id === id).scriptId, null);
   assert.ok(runtime.logs.some(l => l.message.includes('je prázdný; postava poběží bez CODE')));
 });

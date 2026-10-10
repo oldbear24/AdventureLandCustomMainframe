@@ -7,7 +7,7 @@ if (['map', 'inventory', 'editor', 'logs'].includes(legacy)) location.replace(`/
 
 const pending = new Set();
 let transferInventory = null, transferCharacterId = '', transferQuote = null;
-const scriptOptions = (selected = '', empty = 'Bez CODE', linkedOnly = false) => `<option value="">${empty}</option>${app.dashboard.scripts.filter(s => !linkedOnly || s.remoteSlot).map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${escape(s.name)}${s.remoteSlot ? ` · slot ${escape(s.remoteSlot)}` : ' · návrh'}</option>`).join('')}`;
+const scriptOptions = (selected = '', empty = 'Bez CODE', linkedOnly = false) => `<option value="">${empty}</option>${app.dashboard.scripts.filter(s => !linkedOnly || s.remoteSlot || s.id === selected).map(s => `<option value="${s.id}" ${s.id === selected ? 'selected' : ''}>${escape(s.name)}${s.remoteSlot ? ` · slot ${escape(s.remoteSlot)}` : ' · návrh'}</option>`).join('')}`;
 const slotLabel = script => script.remoteSlot ? `Herní slot ${script.remoteSlot} · verze ${script.remoteVersion ?? '?'}` : 'Místní návrh · nelze spustit';
 // Sets innerHTML only when it changed, so a refresh does not rebuild the DOM, lose hover or close dropdowns.
 function setHtml(element, html) { if (element.dataset.html !== html) { element.innerHTML = html; element.dataset.html = html; } }
@@ -59,12 +59,13 @@ function characterCard(c, session) {
   const state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
   const dead = status === 'running' && state?.rip;
   const labels = { running: dead ? 'DEAD' : 'ONLINE', starting: 'STARTUJI', reconnecting: 'OBNOVUJI', stopped: 'OFFLINE' };
-  const script = dashboard.scripts.find(s => s.id === c.scriptId);
+  // Automatic CODE has no assigned script; a running character shows the default slot found at its start.
+  const automatic = !c.scriptId, script = dashboard.scripts.find(s => s.id === (automatic ? session?.scriptId : c.scriptId));
   const codeState = state ? (state.codeRunning ? '<span class="code-state on">CODE běží</span>' : '<span class="code-state off">CODE stojí</span>') : '';
-  const slotText = script?.remoteSlot ? `Herní slot ${shortSlot(script.remoteSlot)} · verze ${script.remoteVersion ?? '?'}` : script ? slotLabel(script) : 'Při startu se najde a stáhne automaticky.';
+  const slotText = `${automatic ? 'Výchozí CODE postavy · ' : ''}${script?.remoteSlot ? `herní slot ${shortSlot(script.remoteSlot)} · verze ${script.remoteVersion ?? '?'}` : script ? slotLabel(script) : 'při každém startu se najde a stáhne poslední verze'}`;
   const modules = session?.code?.modules || [];
   const moduleText = modules.length ? `Moduly: ${modules.map(m => `${m.name}${m.version ? ` v${m.version}` : ''}`).join(', ')}` : '';
-  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}</strong><small title="${escape(script ? slotLabel(script) : '')}">${escape(slotText)}</small>${moduleText ? `<small title="Sloty načtené přes require_code/load_code; jejich změna CODE automaticky znovu načte.">${escape(moduleText)}</small>` : ''}${codeState ? `<small>${codeState}</small>` : ''}</div>${script ? `<a class="button ghost" href="/editor?script=${encodeURIComponent(script.id)}">Upravit CODE</a>` : ''}</div>`;
+  const codeBox = `<div class="card-code"><div><strong>⌘ ${script ? escape(script.name) : 'Výchozí CODE postavy'}${automatic ? ' <span class="muted">· auto</span>' : ''}</strong><small title="${escape(script ? slotLabel(script) : '')}">${escape(slotText)}</small>${moduleText ? `<small title="Sloty načtené přes require_code/load_code; jejich změna CODE automaticky znovu načte.">${escape(moduleText)}</small>` : ''}${codeState ? `<small>${codeState}</small>` : ''}</div>${script ? `<a class="button ghost" href="/editor?script=${encodeURIComponent(script.id)}">Upravit CODE</a>` : ''}</div>`;
   const error = session?.error || session?.code?.error;
   const alerts = session?.alerts || [];
   const xp = state?.max_xp ? `<div><div class="meter-label"><span>XP</span><span>${percentage(state.xp, state.max_xp).toFixed(1)} %${session?.stats?.etaMs ? ` · LVL ${state.level + 1} za ${duration(session.stats.etaMs)}` : ''}</span></div><div class="meter xp"><i style="--fill:${percentage(state.xp, state.max_xp)}%"></i></div></div>` : '';
@@ -175,8 +176,8 @@ function openCharacter(character) {
   $('character-form').reset(); $('character-id').value = character?.id || ''; $('dialog-title').textContent = character?.id ? `Nastavení postavy ${character.name}` : 'Přidat postavu';
   $('character-name').value = character?.name || ''; $('character-region').value = character?.region || 'EU'; $('character-server').value = character?.server || 'I'; $('character-autostart').checked = character?.autoStart || false;
   $('character-idle').value = character?.idleMinutes ?? 10; $('character-auto-reload').checked = character?.autoReloadIdle || false; $('character-potions').value = character?.potionMin ?? 10;
-  $('character-script').innerHTML = scriptOptions(character?.scriptId || '', 'Automaticky – výchozí CODE postavy', true);
-  const scriptHint = () => { $('character-script-hint').textContent = $('character-script').value ? 'Před každým startem se CODE stáhne z vybraného herního slotu.' : 'Při startu se najde výchozí CODE slot postavy ve hře, stáhne se a přiřadí. Vyžaduje API token.'; };
+  $('character-script').innerHTML = scriptOptions(character?.scriptId || '', 'Vždy výchozí CODE postavy (poslední verze)', true);
+  const scriptHint = () => { $('character-script-hint').textContent = $('character-script').value ? 'Před každým startem i reconnectem se stáhne poslední verze vybraného herního slotu.' : 'Při každém startu, restartu i reconnectu se ve hře najde aktuální výchozí CODE slot postavy a stáhne se jeho poslední verze. Výběr zůstane automatický. Vyžaduje API token.'; };
   $('character-script').onchange = scriptHint; scriptHint();
   $('character-dialog').showModal();
 }
@@ -224,9 +225,8 @@ $('owned-characters').addEventListener('click', event => {
   const button = event.target.closest('[data-owned-index]');
   if (!button) return;
   const owned = app.owned[Number(button.dataset.ownedIndex)];
-  // Prefer an already linked script for the character's default slot; otherwise start detects it.
-  const linked = app.dashboard.scripts.find(s => owned.codeSlot && s.remoteSlot === owned.codeSlot);
-  openCharacter({ name: owned.name, region: owned.region || 'EU', server: owned.server || 'I', scriptId: linked?.id || null });
+  // New characters use their default slot, looked up again at every start.
+  openCharacter({ name: owned.name, region: owned.region || 'EU', server: owned.server || 'I', scriptId: null });
 });
 
 // Transfers

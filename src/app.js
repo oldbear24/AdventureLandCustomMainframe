@@ -128,7 +128,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
       const selected = scriptId ? snapshot.scripts.find(s => s.id === scriptId) : snapshot.scripts.find(s => s.remoteSlot === slot);
       if (scriptId && !selected) throw new HttpError(404, 'Místní skript neexistuje.');
       if (snapshot.scripts.some(s => s.remoteSlot === slot && s.id !== selected?.id)) throw new HttpError(409, 'Slot už je propojen s jiným skriptem. Vyber jej v editoru.');
-      if (selected?.remoteSlot !== slot && snapshot.characters.some(c => c.scriptId === selected?.id && runtime.sessions.has(c.id))) throw new HttpError(409, 'Před změnou CODE slotu zastav přiřazené postavy.');
+      if (selected && selected.remoteSlot !== slot && runtime.usesScript(selected.id)) throw new HttpError(409, 'Před změnou CODE slotu zastav přiřazené postavy.');
       const current = await gameApi.getCode(slot);
       const result = await store.update(state => {
         const existing = state.scripts.find(s => s.id === selected?.id);
@@ -358,10 +358,12 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     }); res.json(saved);
   });
   app.delete('/api/scripts/:id', async (req, res) => {
-    await store.update(state => {
+    await runtime.exclusive(() => store.update(state => {
       if (state.characters.some(c => c.scriptId === req.params.id)) throw new HttpError(409, 'Skript je přiřazen postavě. Nejdřív změň přiřazení.');
+      // Characters with automatic CODE run their default slot without having it assigned.
+      if (runtime.usesScript(req.params.id)) throw new HttpError(409, 'Skript právě používá běžící postava jako výchozí CODE. Nejdřív ji zastav.');
       state.scripts = state.scripts.filter(s => s.id !== req.params.id);
-    }); res.json({ ok: true });
+    })); res.json({ ok: true });
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint neexistuje.' }));
   for (const [route, [page, title]] of Object.entries(PAGES)) app.get(route, async (_req, res) => res.type('html').set('Cache-Control', 'no-cache').send(await renderPage(page, title)));

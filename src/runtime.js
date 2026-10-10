@@ -118,33 +118,32 @@ export class Runtime extends EventEmitter {
   start(id) { return this.exclusive(() => this.startInternal(id)); }
   async startInternal(id) {
     if (this.closing) throw new Error('Server se vypíná.');
-    let character = this.store.snapshot().characters.find(c => c.id === id);
+    const character = this.store.snapshot().characters.find(c => c.id === id);
     if (!character) throw new Error('Postava neexistuje.');
     if (!this.config.authCookie) throw new Error('Připoj herní účet v panelu nebo nastav AL_AUTH_COOKIE.');
     if (this.sessions.has(id)) return;
     if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
     const downloadFailed = error => Object.assign(new Error(`Stažení CODE před startem selhalo: ${this.redact(error.message)}`), { status: 502 });
-    if (!character.scriptId) {
-      try { character = await this.detectDefaultScript(character); } catch (error) { throw downloadFailed(error); }
-    }
     if (character.scriptId) {
       const script = this.store.snapshot().scripts.find(s => s.id === character.scriptId);
       if (!script?.remoteSlot) throw Object.assign(new Error('Propoj CODE s herním slotem. Místní návrh nelze spustit.'), { status: 409 });
       if (!this.gameApi?.status().configured) throw Object.assign(new Error('Pro společný herní CODE připoj API token.'), { status: 409 });
     }
     // Download the current slot before logging in, so a missing or unreachable CODE stops the start early.
-    let prefetched;
-    try { prefetched = await this.downloadScript(character); }
+    let scriptId, prefetched;
+    try { scriptId = await this.resolveScript(character); prefetched = await this.downloadScript(scriptId); }
     catch (error) { throw downloadFailed(error); }
     if (prefetched) this.log(id, 'info', `CODE stažen ze slotu ${prefetched.remoteSlot} (verze ${prefetched.remoteVersion}): ${prefetched.name}`);
-    const session = { id, character, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null, prefetched };
+    const session = { id, character, scriptId, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null, prefetched };
     this.sessions.set(id, session);
     try { await this.connect(session); }
     catch (error) { this.failed(session, error); }
   }
   async connect(session) {
-    // Only the first connection uses the copy downloaded by start; reconnects download again.
-    const prefetched = session.prefetched; session.prefetched = null;
+    // Only the first connection uses the copy downloaded by start; reconnects download again,
+    // and a character with automatic CODE looks up its current default slot again.
+    const first = session.prefetched !== undefined, prefetched = session.prefetched; session.prefetched = undefined;
+    if (!first) session.scriptId = await this.resolveScript(session.character);
     if (session.context) await withDeadline(session.context.close(), 5000).catch(() => {});
     session.context = null; session.page = null; session.state = null;
     session.status = 'starting';
@@ -217,16 +216,22 @@ export class Runtime extends EventEmitter {
     session.status = 'running'; session.error = null; session.attempts = 0; session.lastActivityAt = Date.now();
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
   }
-  // A character without assigned CODE gets its own default game slot, linked as a shared script.
+  // The script a session runs: the assigned one, or with automatic CODE the character's current default slot.
+  async resolveScript(character) {
+    if (character.scriptId) return character.scriptId;
+    return (await this.detectDefaultScript(character))?.id || null;
+  }
+  // Finds the character's own default game slot and links it as a shared script. The character keeps
+  // automatic CODE, so every start and reconnect looks the default slot up again.
   async detectDefaultScript(character) {
-    if (!this.gameApi?.status().configured) return character;
+    if (!this.gameApi?.status().configured) return null;
     const slot = await this.gameApi.defaultSlot(character.name);
-    if (!slot) { this.log(character.id, 'info', 'Výchozí CODE slot postavy nebyl nalezen; postava poběží bez CODE.'); return character; }
+    if (!slot) { this.log(character.id, 'info', 'Výchozí CODE slot postavy nebyl nalezen; postava poběží bez CODE.'); return null; }
     let current;
     try { current = await this.gameApi.getCode(slot); }
     catch (error) {
       if (error.status !== 404) throw error;
-      this.log(character.id, 'info', `Výchozí CODE slot postavy (${slot}) je prázdný; postava poběží bez CODE.`); return character;
+      this.log(character.id, 'info', `Výchozí CODE slot postavy (${slot}) je prázdný; postava poběží bez CODE.`); return null;
     }
     const script = await this.store.update(state => {
       const updatedAt = new Date().toISOString();
@@ -236,17 +241,23 @@ export class Runtime extends EventEmitter {
         if (state.scripts.length >= 100) throw new Error('Limit je 100 skriptů.');
         linked = { ...current, id: randomUUID(), updatedAt }; state.scripts.push(linked);
       }
-      const stored = state.characters.find(c => c.id === character.id);
-      if (stored) stored.scriptId = linked.id;
       return linked;
     });
-    this.log(character.id, 'info', `Detekován výchozí CODE postavy: slot ${slot} (${script.name}). Přiřazen k postavě.`);
-    return { ...character, scriptId: script.id };
+    this.log(character.id, 'info', `Výchozí CODE postavy: slot ${slot} (${script.name}).`);
+    return script;
   }
-  // Reads the character's current CODE from its game slot and refreshes the local copy.
-  async downloadScript(character, fetched = null) {
-    const script = this.store.snapshot().scripts.find(s => s.id === character?.scriptId);
-    if (!character?.scriptId) return null;
+  // The script a session runs; sessions created before resolving it fall back to the character's assignment.
+  scriptIdOf(session) {
+    return session.scriptId !== undefined ? session.scriptId : this.store.snapshot().characters.find(c => c.id === session.id)?.scriptId ?? null;
+  }
+  // Running characters whose CODE comes from the script, including characters with automatic CODE.
+  usesScript(scriptId) {
+    return [...this.sessions.values()].some(session => this.scriptIdOf(session) === scriptId);
+  }
+  // Reads the script's current CODE from its game slot and refreshes the local copy.
+  async downloadScript(scriptId, fetched = null) {
+    const script = this.store.snapshot().scripts.find(s => s.id === scriptId);
+    if (!scriptId) return null;
     if (!script) throw new Error('Přiřazený skript neexistuje.');
     if (!script.remoteSlot || !this.gameApi) throw new Error('Propoj CODE s herním slotem a připoj API token.');
     const current = fetched || await this.gameApi.getCode(script.remoteSlot);
@@ -258,8 +269,7 @@ export class Runtime extends EventEmitter {
     return { ...script, ...current };
   }
   async loadScript(session, fetched = null) {
-    const character = this.store.snapshot().characters.find(c => c.id === session.id);
-    const script = await this.downloadScript(character, fetched);
+    const script = await this.downloadScript(this.scriptIdOf(session), fetched);
     session.modules = new Map();
     await withDeadline(session.page.evaluate(source => {
       if (window.code_run) window.stop_runner();
@@ -310,8 +320,7 @@ export class Runtime extends EventEmitter {
   async applySharedScript(script) {
     const hash = createHash('sha256').update(script.source).digest('hex');
     for (const session of this.sessions.values()) {
-      const character = this.store.snapshot().characters.find(c => c.id === session.id);
-      if (session.status !== 'running' || character?.scriptId !== script.id) continue;
+      if (session.status !== 'running' || this.scriptIdOf(session) !== script.id) continue;
       try {
         if (session.codeHash !== hash || session.code?.error) await this.loadScript(session, script);
         else session.code = { slot: script.remoteSlot, version: script.remoteVersion, syncedAt: new Date().toISOString(), error: null };
@@ -321,7 +330,7 @@ export class Runtime extends EventEmitter {
   async syncSharedScripts() {
     if (Date.now() < this.nextCodeSync) return;
     this.nextCodeSync = Date.now() + 30_000;
-    const ids = new Set([...this.sessions.values()].filter(s => s.status === 'running').map(s => this.store.snapshot().characters.find(c => c.id === s.id)?.scriptId).filter(Boolean));
+    const ids = new Set([...this.sessions.values()].filter(s => s.status === 'running').map(s => this.scriptIdOf(s)).filter(Boolean));
     for (const id of ids) {
       const script = this.store.snapshot().scripts.find(s => s.id === id);
       try {
@@ -332,7 +341,7 @@ export class Runtime extends EventEmitter {
         }
         await this.applySharedScript({ ...script, ...current });
       } catch (error) {
-        for (const session of this.sessions.values()) if (session.status === 'running' && this.store.snapshot().characters.find(c => c.id === session.id)?.scriptId === id) await this.pauseCode(session, error);
+        for (const session of this.sessions.values()) if (session.status === 'running' && this.scriptIdOf(session) === id) await this.pauseCode(session, error);
       }
     }
     await this.syncModules();
@@ -554,8 +563,8 @@ export class Runtime extends EventEmitter {
   }
   snapshot() {
     const now = Date.now();
-    return [...this.sessions.values()].map(({ id, status, state, error, nextRetry, startedAt, code, modules, alerts, lastActivityAt, autoReloads, attempts }) => ({
-      id, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, attempts,
+    return [...this.sessions.values()].map(({ id, scriptId, status, state, error, nextRetry, startedAt, code, modules, alerts, lastActivityAt, autoReloads, attempts }) => ({
+      id, scriptId: scriptId ?? null, status, state, error: error ? this.redact(error) : null, nextRetry, startedAt, attempts,
       code: code ? { ...code, modules: [...(modules || [])].map(([name, version]) => ({ name, version })) } : code,
       alerts: (alerts || []).map(a => ({ ...a, message: this.redact(a.message) })), idleMs: status === 'running' && lastActivityAt ? now - lastActivityAt : null, autoReloads: autoReloads || 0,
       stats: this.stats.has(id) ? summarizeStats(this.stats.get(id), status === 'running' ? state : null, now) : null,
