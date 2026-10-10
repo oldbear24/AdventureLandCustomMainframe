@@ -66,6 +66,14 @@ function iconOf(G, sheets, key, item) {
   return { sheet, x: column * set.size, y: row * set.size, size: set.size, width: set.columns * set.size, height: set.rows * set.size };
 }
 
+// Passive item abilities the game client names itself (html.js render_item); they are not in G.skills.
+const ITEM_ABILITIES = {
+  bash: 'Bash', freeze: 'Freeze', poison: 'Poison', burn: 'Burn', weave: 'Weave', secondchance: 'Second Chance', sugarrush: 'Sugar Rush', charm: 'Charm',
+  restore_mp: 'Restore MP', petrify: 'Petrify', hex: 'Hex', shatter: 'Shatter', sunder: 'Sunder', frenzy: 'Primal Frenzy',
+};
+const abilityName = (G, key) => Object.hasOwn(ITEM_ABILITIES, key) ? ITEM_ABILITIES[key]
+  : text(G.skills && Object.hasOwn(G.skills, key) ? G.skills[key]?.name : null, key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+
 // What the panel needs to describe an item and compute its stats the way the game does (calculate_item_properties).
 function itemDetails(G, key, item, titles) {
   const ability = typeof item?.ability === 'string' && /^[a-z0-9_]{1,32}$/i.test(item.ability) ? item.ability : null;
@@ -81,7 +89,7 @@ function itemDetails(G, key, item, titles) {
     gives: Array.isArray(item?.gives) ? item.gives.filter(g => Array.isArray(g) && ['hp', 'mp'].includes(g[0]) && Number.isFinite(g[1])).map(g => [g[0], g[1]]) : [],
     duration: Number.isFinite(item?.duration) ? item.duration : null,
     classes: NAMES(item?.class), set: typeof item?.set === 'string' ? text(G.sets?.[item.set]?.name, item.set) : null,
-    ability: ability ? text(G.skills?.[ability]?.name, ability) : null, legacy, titles,
+    ability: ability ? abilityName(G, ability) : null, legacy, titles,
   };
 }
 

@@ -79,7 +79,7 @@ test('item details and stats are computed like the game', async () => {
   assert.deepEqual(itemView({ name: 'helmet', level: 0 }, names).stats, [['stat', 1], ['armor', 5], ['resistance', 6]]);
   const bow = itemView({ name: 'firebow', level: 2, p: 'shiny' }, names);
   assert.deepEqual(bow.stats, [['attack', 42], ['range', 60]]);
-  assert.deepEqual(bow.ability, { name: 'burn', chance: 2.5 }); assert.equal(bow.damageType, 'physical');
+  assert.deepEqual(bow.ability, { name: 'Burn', chance: 2.5 }); assert.equal(bow.damageType, 'physical');
   assert.deepEqual(itemView({ name: 'hpot0', q: 3 }, names).gives, [['hp', 200]]);
 });
 test('items are whitelisted and named', () => {
