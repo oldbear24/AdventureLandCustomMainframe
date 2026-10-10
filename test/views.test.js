@@ -13,7 +13,7 @@ import { attachLive } from '../src/live.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
 import { createApp } from '../src/app.js';
-import { equipmentView, itemView, packsView } from '../src/inventory.js';
+import { aggregateItems, equipmentView, itemView, packsView } from '../src/inventory.js';
 
 const apiToken = `mcp_${'a'.repeat(43)}`;
 const G = {
@@ -115,7 +115,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -177,6 +177,49 @@ test('a running character is read live, including the bank while inside it', asy
   assert.equal(bank.data.source, 'live'); assert.equal(bank.data.via, 'Runner'); assert.equal(bank.data.gold, 1000);
   assert.equal(bank.data.packs[0].items[0].title, 'Ring of Strength');
   f.runtime.sessions.clear();
+});
+
+test('items of all characters and the bank are grouped with their locations', async t => {
+  const names = { ringsj: { name: 'Ring of Strength', compound: { str: 1 } }, helmet: { name: 'Helmet', upgrade: { armor: 1 } } };
+  const view = (name, extra = {}) => ({ ...itemView({ name, ...extra }, names) });
+  const result = aggregateItems([
+    { kind: 'character', name: 'A', source: 'live', gold: 10, items: [view('ringsj', { level: 1 }), null, view('ringsj', { level: 1, l: 'l' }), view('hpot0', { q: 5 })], equipment: [{ slot: 'ring1', item: view('ringsj', { level: 1 }) }, { slot: 'helmet', item: null }] },
+    { kind: 'character', name: 'B', error: 'Postava nepatří účtu.' },
+    { kind: 'bank', name: null, source: 'saved', gold: 100, observedAt: null, retrievedAt: '2026-10-10T00:00:00.000Z', packs: [{ name: 'items0', items: [view('ringsj', { level: 1 }), view('hpot0', { q: 7 }), view('helmet', { level: 7, p: 'shiny' })] }] },
+  ], names);
+  assert.equal(result.gold, 110);
+  assert.deepEqual(result.sources.map(s => [s.name, s.error ?? s.source]), [['A', 'live'], ['B', 'Postava nepatří účtu.'], [null, 'saved']]);
+  const ring = result.items.find(i => i.name === 'ringsj');
+  assert.equal(ring.total, 4); assert.equal(ring.upgrade, 'compound');
+  assert.deepEqual(ring.locations, [{ owner: 'A', place: 'equipment', locked: false, count: 1 }, { owner: 'A', place: 'inventory', locked: false, count: 1 }, { owner: 'A', place: 'inventory', locked: true, count: 1 }, { owner: null, place: 'bank', locked: false, count: 1 }]);
+  assert.equal(result.items.find(i => i.name === 'hpot0').total, 12);
+  const helmet = result.items.find(i => i.name === 'helmet');
+  assert.equal(helmet.upgrade, 'upgrade'); assert.equal(helmet.special, 'shiny'); assert.equal(helmet.level, 7);
+});
+test('the items endpoint reads every account character and the bank once a minute', async t => {
+  const calls = [];
+  const f = await fixture(t, async (url, options) => {
+    const method = url.slice(url.lastIndexOf('/') + 1), input = JSON.parse(options.body);
+    calls.push(method);
+    if (method === 'mainframe_list_characters') return Response.json({ success: true, characters: [{ character: 'Goldette', level: 33, class: 'merchant' }, { character: 'Gone', level: 1, class: 'mage' }] });
+    if (method === 'mainframe_get_character') {
+      if (input.character !== 'Goldette') return Response.json({ success: false, reason: 'not_found' }, { status: 404 });
+      return Response.json({ success: true, profile: { name: 'Goldette', class: 'merchant', level: 33, gold: 50, inventory: [{ name: 'hpot0', q: 3 }], equipment: { helmet: { name: 'helmet', level: 2 } } } });
+    }
+    if (method === 'get_bank') return Response.json({ success: true, gold: 1000, packs: { items0: [{ name: 'hpot0', q: 10 }] } });
+    throw new Error(`Unexpected ${method}`);
+  });
+  await f.gameApi.connect(apiToken); calls.length = 0;
+  const result = await f.request('/api/items');
+  assert.equal(result.status, 200);
+  assert.equal(result.data.gold, 1050);
+  assert.deepEqual(result.data.sources.map(s => [s.name, s.error ? 'error' : s.source]), [['Goldette', 'saved'], ['Gone', 'error'], [null, 'saved']]);
+  const potion = result.data.items.find(i => i.name === 'hpot0');
+  assert.equal(potion.title, 'Health Potion'); assert.equal(potion.total, 13);
+  assert.deepEqual(potion.locations.map(l => [l.owner, l.place, l.count]), [['Goldette', 'inventory', 3], [null, 'bank', 10]]);
+  const before = calls.length;
+  await f.request('/api/items'); await f.request('/api/items?refresh=1');
+  assert.equal(calls.length, before, 'cached for a minute and a refresh at most every 10 seconds');
 });
 
 test('server events list realms and save which events notify', async t => {

@@ -14,6 +14,12 @@ export const duration = ms => {
 };
 export const classColors = { warrior: '#f2a65a', mage: '#8fc3f5', priest: '#f5e08f', ranger: '#9fe08a', rogue: '#c69cf5', paladin: '#f5c2d6', merchant: '#bcf878' };
 export const LOG_LIMIT = 200;
+// Game icons are tiles of a sprite sheet proxied by the panel; scaled with crisp pixels.
+export function itemIcon(icon, size = 32) {
+  if (!icon) return '<span class="item-icon missing" aria-hidden="true"></span>';
+  const scale = size / icon.size, px = value => `${Math.round(value * scale)}px`;
+  return `<span class="item-icon" aria-hidden="true" style="background-image:url('/api/item-sheets/${encodeURIComponent(icon.sheet)}');background-position:${px(-icon.x)} ${px(-icon.y)};background-size:${px(icon.width)} ${px(icon.height)}"></span>`;
+}
 
 // Shared page state. dashboard is replaced by every poll; live states are merged into it.
 export const app = { dashboard: null, active: false, liveConnected: false, owned: [], ownedLoadedAt: 0 };

@@ -280,6 +280,24 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .item-stats td{text-align:right;font:13px Consolas,monospace;color:var(--text);padding:5px 0;border-top:1px solid var(--line)}
 .item-grid.equipment{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
 
+/* Items */
+.items-filters{display:grid;grid-template-columns:minmax(200px,2fr) repeat(5,minmax(130px,1fr));gap:12px;padding:14px 16px}
+.items-filters label{margin:0 0 6px}
+.items-table td{white-space:normal;vertical-align:middle}
+.items-table td:nth-child(2),.items-table td:nth-child(3){white-space:nowrap;font:12px Consolas,monospace}
+.items-table tbody tr:hover{background:#ffffff05}
+.item-cell{display:flex;align-items:center;gap:10px;min-width:180px}
+.item-cell .item-icon{width:24px;height:24px}
+.item-cell span strong{display:block;font-size:13px;font-weight:600}
+.item-cell span small{display:block;color:var(--faint);font:10px Consolas,monospace}
+.item-cell .tag{margin-left:2px}
+.location-list{display:flex;flex-wrap:wrap;gap:4px}
+.location-chip{font-size:11px;padding:3px 7px;text-decoration:none}
+.location-chip:hover{border-color:var(--accent)}
+.location-chip.bank{color:var(--warn)}.location-chip.equipment{color:var(--info)}
+.location-chip b{font-weight:600}
+.tag.grade-1{color:#c9bf9d}.tag.grade-2{color:#9fa1ec}.tag.grade-3{color:#5fd393}.tag.grade-4{color:#7fb0ff}
+
 /* Events */
 .realm-list{display:grid;gap:14px}
 .realm .section-head{margin-bottom:8px}
@@ -337,6 +355,8 @@ dialog .storage-actions .primary{width:auto}
   .editor-layout{grid-template-columns:1fr}
   .script-sidebar{grid-template-columns:1fr 1fr}
   .map-layout,.inventory-layout{grid-template-columns:1fr}
+  .items-filters{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .items-search{grid-column:1/-1}
   .map-canvas{height:60vh}
 }
 @media(max-width:900px){
@@ -367,4 +387,5 @@ dialog .storage-actions .primary{width:auto}
   .map-tools,.map-tools>div{width:100%}
   .map-tools select{width:100%;min-width:0}
   .item-grid{grid-template-columns:repeat(auto-fill,minmax(74px,1fr))}
+  .items-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
 }

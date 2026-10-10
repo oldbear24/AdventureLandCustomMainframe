@@ -1,0 +1,14 @@
+      <section id="view-items" class="view" aria-labelledby="items-title">
+        <header class="page-head"><div><p class="eyebrow">INVENTÁŘE</p><h1 id="items-title">Předměty napříč účtem</h1></div><div class="head-actions"><button id="items-refresh" class="ghost">↻ Načíst znovu</button></div></header>
+        <div class="surface items-filters">
+          <div class="items-search"><label for="items-search">Hledat předmět</label><input id="items-search" type="search" placeholder="např. ring, wbook, hpot…" maxlength="64"></div>
+          <div><label for="items-place">Kde</label><select id="items-place"><option value="">Všude</option><option value="bank">Banka</option><option value="inventory">Inventáře</option><option value="equipment">Vybavení</option></select></div>
+          <div><label for="items-owner">Postava</label><select id="items-owner"><option value="">Všechny</option></select></div>
+          <div><label for="items-kind">Druh</label><select id="items-kind"><option value="">Vše</option><option value="upgrade">Upgradovatelné</option><option value="compound">Compound</option><option value="triples">Compound: 3+ stejné úrovně</option><option value="other">Ostatní</option></select></div>
+          <div><label for="items-level">Úroveň</label><select id="items-level"><option value="0">Jakákoli</option><option value="3">+3 a víc</option><option value="5">+5 a víc</option><option value="7">+7 a víc</option><option value="8">+8 a víc</option><option value="9">+9 a víc</option><option value="10">+10 a víc</option></select></div>
+          <div><label for="items-sort">Řadit</label><select id="items-sort"><option value="title">Podle názvu</option><option value="total">Podle počtu</option><option value="level">Podle úrovně</option></select></div>
+        </div>
+        <div id="items-summary" class="editing-meta"></div>
+        <div class="surface"><div id="items-table" class="table-wrap" aria-live="polite"><p class="muted">Načítám předměty všech postav a banky…</p></div></div>
+        <p class="fine">Běžící postavy se čtou živě, ostatní postavy a banka z uloženého stavu účtu přes API token. Souhrn se drží minutu; tlačítko Načíst znovu ho obnoví. Compound 3+ počítá jen odemčené kusy mimo vybavení.</p>
+      </section>

@@ -6,7 +6,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { z } from 'zod';
 import { characterSchema, scriptSchema, settingsSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
-import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
+import { aggregateItems, equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
@@ -14,7 +14,7 @@ const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
 const PAGES = {
   '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
-  '/events': ['events', 'Události · '],
+  '/items': ['items', 'Předměty · '], '/events': ['events', 'Události · '],
 };
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
@@ -177,24 +177,21 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   const itemNames = async () => gameData ? gameData.itemNames() : {};
   // A running character is read live; any other owned character comes from the saved account snapshot.
-  app.get('/api/inventories/:name', async (req, res) => {
-    const name = z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).parse(req.params.name);
-    const names = await itemNames();
+  async function characterInventory(name, names) {
     const live = await runtime.exclusive(async () => {
       const session = runtime.sessionByName(name);
       return session ? runtime.details(session.id) : null;
     });
     if (live) {
-      return res.json({ name: live.name, class: String(live.ctype || ''), level: goldOf(live.level), source: 'live', observedAt: new Date().toISOString(), gold: goldOf(live.gold), size: goldOf(live.isize) || live.items.length, items: itemsView(live.items, names), equipment: equipmentView(live.slots, names) });
+      return { name: live.name, class: String(live.ctype || ''), level: goldOf(live.level), source: 'live', observedAt: new Date().toISOString(), gold: goldOf(live.gold), size: goldOf(live.isize) || live.items.length, items: itemsView(live.items, names), equipment: equipmentView(live.slots, names) };
     }
     if (!gameApi?.status().configured) throw new HttpError(409, 'Postava neběží v panelu. Pro uložený inventář připoj API token.');
     const profile = await gameApi.profile(name);
     const items = Array.isArray(profile.inventory) ? profile.inventory : [];
-    res.json({ name: typeof profile.name === 'string' ? profile.name : name, class: typeof profile.class === 'string' ? profile.class : '', level: goldOf(profile.level), source: 'saved', observedAt: typeof profile.synchronized_at === 'string' ? profile.synchronized_at : null, gold: goldOf(profile.gold), size: goldOf(profile.inventory_slots) || items.length, items: itemsView(items, names), equipment: equipmentView(profile.equipment, names) });
-  });
+    return { name: typeof profile.name === 'string' ? profile.name : name, class: typeof profile.class === 'string' ? profile.class : '', level: goldOf(profile.level), source: 'saved', observedAt: typeof profile.synchronized_at === 'string' ? profile.synchronized_at : null, gold: goldOf(profile.gold), size: goldOf(profile.inventory_slots) || items.length, items: itemsView(items, names), equipment: equipmentView(profile.equipment, names) };
+  }
   // The game only sends bank contents to a character standing in the bank; otherwise use the saved snapshot.
-  app.get('/api/bank', async (_req, res) => {
-    const names = await itemNames();
+  async function bankContents(names) {
     const live = await runtime.exclusive(async () => {
       for (const session of runtime.sessions.values()) {
         if (session.status !== 'running' || !session.state?.map?.startsWith('bank')) continue;
@@ -203,10 +200,41 @@ export function createApp(config, store, runtime, account = null, gameApi = null
       }
       return null;
     });
-    if (live) return res.json({ source: 'live', observedAt: new Date().toISOString(), via: live.name, gold: goldOf(live.bank.gold), packs: packsView(live.bank, names) });
+    if (live) return { source: 'live', observedAt: new Date().toISOString(), via: live.name, gold: goldOf(live.bank.gold), packs: packsView(live.bank, names) };
     if (!gameApi?.status().configured) throw new HttpError(409, 'Banka je živě vidět jen s postavou v bance. Pro uložený obsah připoj API token.');
     const bank = await gameApi.bank();
-    res.json({ source: 'saved', observedAt: typeof bank.observed_at === 'string' ? bank.observed_at : null, retrievedAt: typeof bank.retrieved_at === 'string' ? bank.retrieved_at : new Date().toISOString(), via: null, gold: goldOf(bank.gold), packs: packsView(bank.packs, names) });
+    return { source: 'saved', observedAt: typeof bank.observed_at === 'string' ? bank.observed_at : null, retrievedAt: typeof bank.retrieved_at === 'string' ? bank.retrieved_at : new Date().toISOString(), via: null, gold: goldOf(bank.gold), packs: packsView(bank.packs, names) };
+  }
+  app.get('/api/inventories/:name', async (req, res) => {
+    const name = z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).parse(req.params.name);
+    res.json(await characterInventory(name, await itemNames()));
+  });
+  app.get('/api/bank', async (_req, res) => res.json(await bankContents(await itemNames())));
+  // Every item of every character (panel and account) and the bank, grouped; kept for a minute because it costs many API reads.
+  let itemsCache = null, itemsLoading = null;
+  async function collectItems() {
+    const names = await itemNames();
+    const characters = new Map(store.snapshot().characters.map(c => [c.name.toLowerCase(), c.name]));
+    if (gameApi?.status().configured) {
+      const owned = await gameApi.characters().catch(() => ({ characters: [] }));
+      for (const c of owned.characters) if (!characters.has(c.name.toLowerCase())) characters.set(c.name.toLowerCase(), c.name);
+    }
+    const sources = [];
+    const failed = error => error.status && error.status < 500 ? error.message : runtime.redact(error.message || 'Načtení selhalo.');
+    for (const name of [...characters.values()].sort((a, b) => a.localeCompare(b))) {
+      try { sources.push({ kind: 'character', ...await characterInventory(name, names) }); }
+      catch (error) { sources.push({ kind: 'character', name, error: failed(error) }); }
+    }
+    try { sources.push({ kind: 'bank', name: null, ...await bankContents(names) }); }
+    catch (error) { sources.push({ kind: 'bank', name: null, error: failed(error) }); }
+    return { generatedAt: new Date().toISOString(), ...aggregateItems(sources, names) };
+  }
+  app.get('/api/items', async (req, res) => {
+    const age = itemsCache ? Date.now() - itemsCache.at : Infinity;
+    // A manual refresh is honoured at most every 10 seconds.
+    if (age < (req.query.refresh === '1' ? 10_000 : 60_000)) return res.json(itemsCache.body);
+    itemsLoading ||= collectItems().then(body => { itemsCache = { at: Date.now(), body }; return body; }).finally(() => { itemsLoading = null; });
+    res.json(await itemsLoading);
   });
   // Bosses and server events seen by running characters, one reading per realm, and which of them notify.
   app.get('/api/server-events', async (_req, res) => {

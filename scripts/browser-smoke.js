@@ -286,6 +286,20 @@ try {
   await page.waitForFunction(() => document.querySelector('#inventory-detail').textContent.includes('Trezor 1'));
   assert.match(await page.locator('#inventory-detail').textContent(), /465\s870 G/);
   await page.screenshot({ path: 'test-results/bank-desktop.png', fullPage: true });
+  // Items across the account: live character, saved character and bank in one table.
+  await page.locator('[data-nav=items]').click();
+  await page.waitForFunction(() => document.querySelector('#items-table tbody'));
+  assert.match(await page.locator('tr[data-item="hpot0||"]').textContent(), /Health Potion.*142.*SavedMage · inventář ×5.*TestWarrior · inventář ×6.*Banka ×131/s);
+  await page.locator('#items-owner').selectOption('__bank__');
+  assert.match(page.url(), /owner=__bank__/);
+  assert.match(await page.locator('tr[data-item="hpot0||"]').textContent(), /131/);
+  assert.equal(await page.locator('tr[data-item="sword|5|"]').count(), 0, 'the equipped sword is not in the bank');
+  await page.locator('#items-owner').selectOption('');
+  await page.locator('#items-place').selectOption('equipment');
+  assert.equal(await page.locator('#items-table tbody tr').count(), 2);
+  await page.locator('#items-search').fill('sword');
+  assert.equal(await page.locator('#items-table tbody tr').count(), 1);
+  await page.screenshot({ path: 'test-results/items-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   await page.screenshot({ path: 'test-results/bank-mobile.png', fullPage: true });

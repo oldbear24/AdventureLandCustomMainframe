@@ -89,3 +89,37 @@ export function packsView(bank, names) {
     .map(pack => ({ name: pack, items: itemsView(bank[pack], names, 64) }));
 }
 export const goldOf = value => count(value, 0) ?? 0;
+
+// Groups the items of every source (character inventories and equipment, the bank) by item, level and prefix,
+// with where each group lies. Sources are already sanitized views; a source that failed only reports its error.
+export function aggregateItems(sources, names = {}) {
+  const groups = new Map();
+  const add = (item, owner, place) => {
+    if (!item) return;
+    const key = `${item.name}|${item.level ?? ''}|${item.special ?? ''}`;
+    const def = Object.hasOwn(names, item.name) ? names[item.name] : null;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key, name: item.name, title: item.title, icon: item.icon, level: item.level, special: item.special, specialTitle: item.specialTitle ?? null,
+        grade: item.grade ?? 0, type: item.type ?? null, description: item.description ?? null, stats: item.stats ?? [],
+        upgrade: def?.upgrade ? 'upgrade' : def?.compound ? 'compound' : null, total: 0, locations: [],
+      };
+      groups.set(key, group);
+    }
+    group.total += item.quantity;
+    const location = group.locations.find(l => l.owner === owner && l.place === place && l.locked === item.locked);
+    if (location) location.count += item.quantity; else group.locations.push({ owner, place, locked: item.locked, count: item.quantity });
+  };
+  const summary = sources.map(source => {
+    if (source.error) return { kind: source.kind, name: source.name, error: source.error };
+    if (source.kind === 'bank') for (const pack of source.packs) for (const item of pack.items) add(item, null, 'bank');
+    else {
+      for (const { item } of source.equipment) add(item, source.name, 'equipment');
+      for (const item of source.items) add(item, source.name, 'inventory');
+    }
+    return { kind: source.kind, name: source.name, class: source.class ?? null, level: source.level ?? null, source: source.source, observedAt: source.observedAt ?? source.retrievedAt ?? null, gold: source.gold };
+  });
+  const items = [...groups.values()].sort((a, b) => a.title.localeCompare(b.title) || (a.level ?? -1) - (b.level ?? -1));
+  return { sources: summary, items, gold: summary.reduce((sum, s) => sum + (s.gold || 0), 0) };
+}
