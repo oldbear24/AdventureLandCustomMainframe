@@ -28,13 +28,47 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Check JavaScript
+        id: check
         run: npm run check
       - name: Test backend
-        run: npm test
+        id: backend
+        run: >-
+          npm test --
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=./scripts/github-summary-reporter.js --test-reporter-destination="$GITHUB_STEP_SUMMARY"
       - name: Install Chromium
+        id: chromium
         run: npx playwright install --with-deps chromium
       - name: Test browser and game bridge with local fixtures
+        id: browser
         run: npm run test:browser
+      - name: Summarize test results
+        if: always()
+        env:
+          CHECK: ${{ steps.check.outcome }}
+          BACKEND: ${{ steps.backend.outcome }}
+          CHROMIUM: ${{ steps.chromium.outcome }}
+          BROWSER: ${{ steps.browser.outcome }}
+        shell: bash
+        run: |
+          result() {
+            case "$1" in
+              success) echo '✅ Passed' ;;
+              failure) echo '❌ Failed' ;;
+              cancelled) echo '🚫 Cancelled' ;;
+              *) echo '⏭️ Skipped' ;;
+            esac
+          }
+          {
+            echo '### Test overview'
+            echo
+            echo '| Step | Result |'
+            echo '| --- | --- |'
+            echo "| Check JavaScript | $(result "$CHECK") |"
+            echo "| Backend tests | $(result "$BACKEND") |"
+            echo "| Install Chromium | $(result "$CHROMIUM") |"
+            echo "| Browser and game bridge tests | $(result "$BROWSER") |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   docker:
     name: Build, smoke test and publish
