@@ -25,8 +25,9 @@ const G = {
   },
   geometry: { main: { min_x: -100, max_x: 200, min_y: -80, max_y: 120, x_lines: [[0, -10, 10], ['bad']], y_lines: [[5, -20, 20]] }, bank: { min_x: 0, max_x: 10, min_y: 0, max_y: 10, x_lines: [], y_lines: [] } },
   npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo' }, bee: { name: 'Bee' } },
-  items: { hpot0: { name: 'Health Potion', type: 'pot' }, ringsj: { name: 'Ring of Strength', type: 'ring', skin: 'ring' }, lost: { name: 'Lost' }, outside: { name: 'Outside' } },
+  items: { hpot0: { name: 'Health Potion', type: 'pot', gives: [['hp', 200], ['bad', 1]] }, helmet: { name: 'Helmet', type: 'helmet', tier: 1, stat: 1, armor: 5, resistance: 6, upgrade: { stat: 1, resistance: 0.5, armor: 0.5 }, grades: [7, 9, 10, 12], explanation: 'Protects the head.', secret: 'x' }, firebow: { name: 'Fire Bow', type: 'weapon', wtype: 'bow', tier: 2, damage_type: 'physical', attack: 30, range: 50, attr0: 2, ability: 'burn', upgrade: { attack: 4, range: 5, attr0: 0.25 }, grades: [6, 9, 10, 12] }, ringsj: { name: 'Ring of Strength', type: 'ring', skin: 'ring' }, lost: { name: 'Lost' }, outside: { name: 'Outside' } },
   imagesets: { pack_20: { size: 20, rows: 4, columns: 8, file: '/images/tiles/items/pack_20vt8.png' }, pack_1a: { size: 16, rows: 2, columns: 2, file: '/images/tiles/items/pack_1a.png?v=11' }, evil: { size: 20, rows: 1, columns: 1, file: 'https://example.com/x.png' }, sneaky: { size: 20, rows: 1, columns: 1, file: '/images/../secret.png' } },
+  titles: { lucky: { type: 'all_items', luck: 2, title: 'Lucky' } }, sets: {}, skills: {},
   positions: { hpot0: ['', 4, 2], ring: ['pack_1a', 1, 1], outside: ['', 8, 0] },
 };
 const dataJs = `var G=${JSON.stringify(G)};`;
@@ -67,6 +68,19 @@ test('item icon sheets are fetched once from the game and must be PNG', async ()
   await assert.rejects(data.sheet('../x'), { status: 400 });
   const html = new GameData(serve(Buffer.from('<html>')));
   await assert.rejects(html.sheet('pack_20'), { status: 502 });
+});
+test('item details and stats are computed like the game', async () => {
+  const names = await new GameData(serve()).itemNames();
+  assert.equal(names.helmet.secret, undefined);
+  const helmet = itemView({ name: 'helmet', level: 7, p: 'lucky', stat_type: 'str' }, names);
+  assert.equal(helmet.description, 'Protects the head.'); assert.equal(helmet.specialTitle, 'Lucky'); assert.equal(helmet.grade, 1);
+  // Base 1 stat + 6 upgrades of 1 + the +7 step (round(1.25) + 1) = 9 str; armor 5 + 0.5·(6 + 1.25) rounds to 9.
+  assert.deepEqual(helmet.stats, [['luck', 2], ['str', 9], ['armor', 9], ['resistance', 10]]);
+  assert.deepEqual(itemView({ name: 'helmet', level: 0 }, names).stats, [['stat', 1], ['armor', 5], ['resistance', 6]]);
+  const bow = itemView({ name: 'firebow', level: 2, p: 'shiny' }, names);
+  assert.deepEqual(bow.stats, [['attack', 42], ['range', 60]]);
+  assert.deepEqual(bow.ability, { name: 'burn', chance: 2.5 }); assert.equal(bow.damageType, 'physical');
+  assert.deepEqual(itemView({ name: 'hpot0', q: 3 }, names).gives, [['hp', 200]]);
 });
 test('items are whitelisted and named', () => {
   const icon = { sheet: 'pack_20', x: 0, y: 0, size: 20, width: 20, height: 20 };
@@ -118,7 +132,7 @@ test('saved inventories and bank come from the API token without leaking extra f
   const inventory = await f.request('/api/inventories/Goldette');
   assert.equal(inventory.status, 200);
   assert.equal(inventory.data.source, 'saved'); assert.equal(inventory.data.size, 42); assert.equal(inventory.data.gold, 55800);
-  assert.deepEqual(inventory.data.items, [{ name: 'hpot0', title: 'Health Potion', icon: { sheet: 'pack_20', x: 80, y: 40, size: 20, width: 160, height: 80 }, level: null, quantity: 3, locked: false, special: null, stat: null }, null]);
+  assert.deepEqual(inventory.data.items, [{ name: 'hpot0', title: 'Health Potion', icon: { sheet: 'pack_20', x: 80, y: 40, size: 20, width: 160, height: 80 }, level: null, quantity: 3, locked: false, special: null, stat: null, type: 'pot', description: null, specialTitle: null, tier: null, damageType: null, stats: [], grade: 0, gives: [['hp', 200]], duration: null, classes: [], set: null, ability: null }, null]);
   assert.deepEqual(inventory.data.equipment.map(e => [e.slot, e.item.title, e.item.level]), [['ring1', 'Ring of Strength', 1]]);
   assert.equal(JSON.stringify(inventory.data).includes('hidden-field') || JSON.stringify(inventory.data).includes('private-auth'), false);
   assert.equal((await f.request('/api/inventories/Nobody')).status, 404);

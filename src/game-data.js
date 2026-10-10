@@ -1,4 +1,5 @@
 import { GAME_ORIGIN } from './runtime.js';
+import { ITEM_STATS } from './inventory.js';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
 export const MAP_NAME = /^[a-zA-Z0-9_]{1,40}$/;
@@ -12,6 +13,13 @@ const REFRESH = 6 * 60 * 60 * 1000;
 const finite = value => Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
 const text = (value, fallback) => typeof value === 'string' && value.length <= 80 ? value : fallback;
 const point = (x, y) => finite(x) !== null && finite(y) !== null;
+const NAMES = list => Array.isArray(list) ? list.filter(c => typeof c === 'string' && /^[a-z]{1,24}$/.test(c)).slice(0, 12) : [];
+// Only numeric item properties the game turns into stats; everything else in G.items stays on the server.
+const numbers = source => {
+  const out = {};
+  if (source && typeof source === 'object') for (const key of ITEM_STATS) if (typeof source[key] === 'number' && Number.isFinite(source[key])) out[key] = source[key];
+  return out;
+};
 
 // Reduces one map to what the panel draws: walls, monster zones, NPCs and doors.
 function compactMap(G, name) {
@@ -58,6 +66,25 @@ function iconOf(G, sheets, key, item) {
   return { sheet, x: column * set.size, y: row * set.size, size: set.size, width: set.columns * set.size, height: set.rows * set.size };
 }
 
+// What the panel needs to describe an item and compute its stats the way the game does (calculate_item_properties).
+function itemDetails(G, key, item, titles) {
+  const ability = typeof item?.ability === 'string' && /^[a-z0-9_]{1,32}$/i.test(item.ability) ? item.ability : null;
+  const legacy = {};
+  if (item?.legacy && typeof item.legacy === 'object') for (const [stat, value] of Object.entries(item.legacy)) if (value === null ? ['class', 'set'].includes(stat) : ITEM_STATS.includes(stat) && Number.isFinite(value)) legacy[stat] = value;
+  return {
+    name: text(item?.name, key), type: text(item?.type, ''),
+    explanation: typeof item?.explanation === 'string' && item.explanation.length <= 400 ? item.explanation : null,
+    tier: Number.isFinite(item?.tier) ? item.tier : null, wtype: text(item?.wtype, null),
+    damageType: ['physical', 'magical', 'pure'].includes(item?.damage_type) ? item.damage_type : null,
+    stats: numbers(item), upgrade: item?.upgrade ? numbers(item.upgrade) : null, compound: !item?.upgrade && item?.compound ? numbers(item.compound) : null,
+    grades: Array.isArray(item?.grades) && item.grades.length === 4 && item.grades.every(Number.isFinite) ? item.grades : null,
+    gives: Array.isArray(item?.gives) ? item.gives.filter(g => Array.isArray(g) && ['hp', 'mp'].includes(g[0]) && Number.isFinite(g[1])).map(g => [g[0], g[1]]) : [],
+    duration: Number.isFinite(item?.duration) ? item.duration : null,
+    classes: NAMES(item?.class), set: typeof item?.set === 'string' ? text(G.sets?.[item.set]?.name, item.set) : null,
+    ability: ability ? text(G.skills?.[ability]?.name, ability) : null, legacy, titles,
+  };
+}
+
 // Public game definitions (data.js) give map geometry and item names without any running character.
 export class GameData {
   constructor(request = fetch) {
@@ -75,8 +102,10 @@ export class GameData {
     try { G = JSON.parse(body.slice(body.indexOf('{'), body.lastIndexOf('}') + 1)); }
     catch { throw failure(502, 'Herní data mají neočekávaný formát.'); }
     if (!G?.maps || !G?.geometry || !G?.items) throw failure(502, 'Herní data mají neočekávaný formát.');
-    const sheets = iconSheets(G), items = {};
-    for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { name: text(item?.name, key), type: text(item?.type, ''), icon: iconOf(G, sheets, key, item) };
+    const sheets = iconSheets(G), items = {}, titles = {};
+    for (const [key, title] of Object.entries(G.titles || {})) if (ITEM_NAME.test(key) && title && typeof title === 'object') titles[key] = { title: text(title.title, key), stats: numbers(title) };
+    // Every item shares the one titles table; it resolves an item's prefix (item.p) such as Lucky or Fast.
+    for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { ...itemDetails(G, key, item, titles), icon: iconOf(G, sheets, key, item) };
     const maps = Object.entries(G.maps).filter(([name, map]) => MAP_NAME.test(name) && map && !map.ignore && (G.geometry[map.key] || G.geometry[name]))
       .map(([name, map]) => ({ name, title: text(map.name, name) })).sort((a, b) => a.title.localeCompare(b.title));
     return { G, items, maps, sheets, version: finite(G.version) };

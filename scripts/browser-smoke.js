@@ -82,7 +82,7 @@ function iconSheet() {
   const rows = []; for (let y = 0; y < 40; y++) { rows.push(0); for (let x = 0; x < 40; x++) rows.push(x < 20 ? 200 : 40, y < 20 ? 60 : 180, 90); }
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0))]);
 }
-const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
+const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
   imagesets: { pack_20: { size: 20, rows: 2, columns: 2, file: '/images/tiles/items/pack_20vt8.png' } }, positions: { hpot0: ['', 1, 0] },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
   geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
@@ -242,6 +242,13 @@ try {
   assert.equal(await page.locator('#inventory-detail .item-icon:not(.missing)').count(), 1);
   assert.match(await page.locator('#inventory-detail .item-icon:not(.missing)').getAttribute('style'), /item-sheets\/pack_20.*background-position:-32px 0px/);
   assert.equal(await page.evaluate(() => new Promise(resolve => { const image = new Image(); image.onload = () => resolve(image.naturalWidth); image.onerror = () => resolve(0); image.src = '/api/item-sheets/pack_20'; })), 40);
+  // Clicking an item shows its description and stats computed from the game data (+5 sword: 20 + 5·5 attack).
+  await page.locator('#inventory-detail .item-grid.equipment .item-tile[role=button]').first().click();
+  await page.waitForFunction(() => document.querySelector('#item-dialog').open);
+  assert.match(await page.locator('#item-detail').textContent(), /Short Sword \+5/);
+  assert.match(await page.locator('#item-detail').textContent(), /A trusty blade\./);
+  assert.match(await page.locator('#item-detail .item-stats').textContent(), /Poškození45/);
+  await page.locator('#close-item').click();
   await page.locator('#inventory-filter').fill('potion');
   assert.equal(await page.locator('#inventory-detail .item-tile:not(.dimmed):not(.empty-slot)').count(), 1);
   await page.locator('#inventory-filter').fill('');
