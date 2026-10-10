@@ -14,7 +14,12 @@ const length = n => {
 };
 const der = (tag, ...parts) => { const body = Buffer.concat(parts); return Buffer.concat([Buffer.from([tag]), length(body.length), body]); };
 const seq = (...parts) => der(0x30, ...parts);
-const integer = bytes => der(0x02, bytes[0] & 0x80 ? Buffer.concat([Buffer.from([0]), bytes]) : bytes);
+// DER integers are minimal: no redundant leading zero byte, and one added only to keep a set high bit positive.
+const integer = bytes => {
+  let start = 0; while (start < bytes.length - 1 && bytes[start] === 0 && !(bytes[start + 1] & 0x80)) start++;
+  const value = bytes.subarray(start);
+  return der(0x02, value[0] & 0x80 ? Buffer.concat([Buffer.from([0]), value]) : value);
+};
 const oid = text => {
   const [first, second, ...rest] = text.split('.').map(Number), bytes = [first * 40 + second];
   for (let value of rest) { const encoded = [value & 0x7f]; while ((value >>>= 7)) encoded.unshift(0x80 | (value & 0x7f)); bytes.push(...encoded); }

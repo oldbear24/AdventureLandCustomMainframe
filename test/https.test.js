@@ -27,6 +27,10 @@ test('TLS config always uses HTTPS: generated certificate by default, own cert/k
   const own = configFromEnv({ ...base, TLS_CERT_FILE: 'cert.pem', TLS_KEY_FILE: 'key.pem' });
   assert.equal(own.tls.selfSigned, false); assert.equal(own.tls.certFile, path.resolve('cert.pem'));
 });
+test('generated certificates always parse, whatever random serial they get', () => {
+  // About 1 in 256 random serials starts with a zero byte that DER forbids; 2000 certificates hit it almost surely.
+  for (let attempt = 0; attempt < 2000; attempt++) assert.doesNotThrow(() => new X509Certificate(createSelfSignedCertificate(['localhost']).cert));
+});
 test('generated certificate is persisted, reused and regenerated when names change or it nears expiry', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-cert-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
