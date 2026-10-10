@@ -96,7 +96,8 @@ function iconSheet() {
   const rows = []; for (let y = 0; y < 40; y++) { rows.push(0); for (let x = 0; x < 40; x++) rows.push(x < 20 ? 200 : 40, y < 20 ? 60 : 180, 90); }
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0))]);
 }
-const fixtureData = { version: 1, events: { franky: { name: 'Franky' }, halloween: { name: 'Halloween' } }, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' }, franky: { name: 'Franky' }, icegolem: { name: 'Ice Golem' } },
+const fixtureData = { version: 1, events: { franky: { name: 'Franky' }, halloween: { name: 'Halloween' } }, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo', hp: 100, xp: 100, attack: 5, damage_type: 'physical' }, franky: { name: 'Franky', hp: 120000000, xp: 200000000, attack: 2910, damage_type: 'magical', cooperative: true }, icegolem: { name: 'Ice Golem', hp: 1000000, xp: 10000 } },
+  monster_gold: { goo: 20, franky: 10000 }, drops: { monsters: { goo: [[0.001, 'sword'], [0.05, 'hpot0']] } },
   imagesets: { pack_20: { size: 20, rows: 2, columns: 2, file: '/images/tiles/items/pack_20vt8.png' } }, positions: { hpot0: ['', 1, 0] },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
   geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
@@ -305,6 +306,21 @@ try {
   runtime.journal(store.snapshot().characters[0].id, 'level', 'Dosažen level 43.');
   await page.waitForFunction(() => document.querySelector('.journal-entry').textContent.includes('level 43'), null, { timeout: 8000 });
   await page.screenshot({ path: 'test-results/journal-desktop.png', fullPage: true });
+  // Monsters: base XP, gold, drops and spawn maps from the game data.
+  await page.locator('[data-nav=monsters]').click();
+  await page.waitForFunction(() => document.querySelector('#monster-table tbody'));
+  assert.equal(await page.locator('#monster-table tbody tr').count(), 1, 'only monsters that spawn on a map by default');
+  assert.match(await page.locator('tr[data-monster=goo]').textContent(), /Goo.*100.*100.*1.*20.*Mainland.*Health Potion.*5 %.*Short Sword.*0,1 %/s);
+  await page.locator('#monster-spawning').uncheck();
+  assert.equal(await page.locator('#monster-table tbody tr').count(), 3);
+  assert.match(await page.locator('#monster-table tbody tr').first().textContent(), /Franky.*BOSS.*CO-OP/s, 'sorted by XP per HP: 200M XP for 120M HP beats Goo');
+  await page.locator('#monster-search').fill('sword');
+  assert.equal(await page.locator('#monster-table tbody tr').count(), 1, 'search finds monsters by their drops');
+  await page.locator('tr[data-monster=goo] td').first().click();
+  await page.waitForFunction(() => document.querySelector('#monster-dialog').open);
+  assert.match(await page.locator('#monster-detail').textContent(), /Základní zlato20.*Mainland.*Short Sword0,1 % \(1 : 1\s000\)/s);
+  await page.locator('#close-monster').click();
+  await page.screenshot({ path: 'test-results/monsters-desktop.png', fullPage: true });
   // Events: the server's bosses and events as the running character's game client sees them.
   await page.locator('[data-nav=events]').click();
   await page.waitForFunction(() => document.querySelector('[data-realm="EU I"] [data-event=franky]'));

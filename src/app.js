@@ -15,7 +15,7 @@ const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
 const PAGES = {
   '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
-  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/journal': ['journal', 'Deník · '], '/events': ['events', 'Události · '],
+  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/journal': ['journal', 'Deník · '], '/monsters': ['monsters', 'Kde farmit · '], '/events': ['events', 'Události · '],
 };
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
@@ -170,6 +170,11 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
     res.set('Cache-Control', 'private, max-age=3600');
     res.json(await gameData.map(req.params.name));
+  });
+  app.get('/api/monsters', async (_req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json(await gameData.monsters());
   });
   app.get('/api/item-sheets/:name', async (req, res) => {
     if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');

@@ -25,7 +25,8 @@ const G = {
     hidden: { key: 'hidden', name: 'Hidden', ignore: true },
   },
   geometry: { main: { min_x: -100, max_x: 200, min_y: -80, max_y: 120, x_lines: [[0, -10, 10], ['bad']], y_lines: [[5, -20, 20]] }, bank: { min_x: 0, max_x: 10, min_y: 0, max_y: 10, x_lines: [], y_lines: [] } },
-  npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo' }, bee: { name: 'Bee' } },
+  npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo', hp: 100, xp: 100, attack: 5, damage_type: 'physical', frequency: 0.4 }, bee: { name: 'Bee', hp: 300, xp: 400, attack: 16, damage_type: 'magical', armor: 10 }, target: { name: 'Target', hp: 1, unlist: true }, broken: { name: 'Broken' } },
+  monster_gold: { goo: 20 }, drops: { monsters: { goo: [[0.001, 'ringsj'], [0.5, 'hpot0', 2], [1, '<b>']] } },
   items: { hpot0: { name: 'Health Potion', type: 'pot', gives: [['hp', 200], ['bad', 1]] }, helmet: { name: 'Helmet', type: 'helmet', tier: 1, stat: 1, armor: 5, resistance: 6, upgrade: { stat: 1, resistance: 0.5, armor: 0.5 }, grades: [7, 9, 10, 12], explanation: 'Protects the head.', secret: 'x' }, firebow: { name: 'Fire Bow', type: 'weapon', wtype: 'bow', tier: 2, damage_type: 'physical', attack: 30, range: 50, attr0: 2, ability: 'burn', upgrade: { attack: 4, range: 5, attr0: 0.25 }, grades: [6, 9, 10, 12] }, ringsj: { name: 'Ring of Strength', type: 'ring', skin: 'ring' }, lost: { name: 'Lost' }, outside: { name: 'Outside' } },
   imagesets: { pack_20: { size: 20, rows: 4, columns: 8, file: '/images/tiles/items/pack_20vt8.png' }, pack_1a: { size: 16, rows: 2, columns: 2, file: '/images/tiles/items/pack_1a.png?v=11' }, evil: { size: 20, rows: 1, columns: 1, file: 'https://example.com/x.png' }, sneaky: { size: 20, rows: 1, columns: 1, file: '/images/../secret.png' } },
   titles: { lucky: { type: 'all_items', luck: 2, title: 'Lucky' } }, sets: {}, skills: {},
@@ -57,6 +58,15 @@ test('game data is reduced to drawable maps and item names', async () => {
   const broken = new GameData(async () => new Response('not javascript'));
   await assert.rejects(broken.mapList(), { status: 502 });
   assert.deepEqual(await broken.itemNames(), {});
+});
+test('monsters are listed with base gold, drops by chance and spawn maps', async () => {
+  const { monsters } = await new GameData(serve()).monsters();
+  assert.deepEqual(monsters.map(m => m.key), ['bee', 'goo']);
+  const [bee, goo] = monsters;
+  assert.equal(goo.gold, 20); assert.equal(bee.gold, null); assert.equal(bee.armor, 10); assert.equal(bee.damageType, 'magical');
+  assert.deepEqual(goo.spawns, [{ map: 'main', title: 'Mainland', count: 4 }]);
+  assert.deepEqual(bee.spawns, [{ map: 'main', title: 'Mainland', count: 0 }]);
+  assert.deepEqual(goo.drops.map(d => [d.item, d.title, d.chance, d.quantity]), [['hpot0', 'Health Potion', 0.5, 2], ['ringsj', 'Ring of Strength', 0.001, null]]);
 });
 test('item icon sheets are fetched once from the game and must be PNG', async () => {
   const urls = [];
@@ -116,7 +126,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí'], ['/monsters', 'monsters', 'Kde farmit']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();

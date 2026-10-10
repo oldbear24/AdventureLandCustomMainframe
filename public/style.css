@@ -352,6 +352,21 @@ a.journal-who:hover{color:var(--accent)}
 .location-chip b{font-weight:600}
 .tag.grade-1{color:#c9bf9d}.tag.grade-2{color:#9fa1ec}.tag.grade-3{color:#5fd393}.tag.grade-4{color:#7fb0ff}
 
+/* Monsters */
+.monster-filters{grid-template-columns:minmax(200px,2fr) repeat(4,minmax(130px,1fr))}
+.monster-check{grid-column:1/-1;margin:0}
+.monster-table td{white-space:normal;vertical-align:middle;font-variant-numeric:tabular-nums}
+.monster-table td small{display:block;color:var(--faint);font-size:11px}
+.monster-table td:first-child small{font:10px Consolas,monospace}
+.monster-table td b{color:var(--accent);font-weight:600}
+.monster-table tbody tr{cursor:pointer}
+.monster-table tbody tr:hover,.monster-table tbody tr:focus{background:#ffffff06;outline:none}
+.drop-list{display:grid;gap:3px;min-width:170px}
+.drop{display:flex;align-items:center;gap:6px;font-size:12px}
+.drop .item-icon{width:20px;height:20px}
+.drop small{margin-left:auto;color:var(--faint);font:11px Consolas,monospace;display:inline!important}
+.drops-table td small{color:var(--faint);margin-left:4px}
+
 /* Events */
 .realm-list{display:grid;gap:14px}
 .realm .section-head{margin-bottom:8px}
@@ -410,6 +425,7 @@ dialog .storage-actions .primary{width:auto}
   .script-sidebar{grid-template-columns:1fr 1fr}
   .map-layout,.inventory-layout{grid-template-columns:1fr}
   .items-filters{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .monster-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
   .chart-grid{grid-template-columns:1fr}
   .items-search{grid-column:1/-1}
   .map-canvas{height:60vh}
