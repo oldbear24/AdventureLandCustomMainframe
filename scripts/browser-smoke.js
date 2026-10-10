@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { Store } from '../src/store.js';
 import { Runtime, GAME_ORIGIN } from '../src/runtime.js';
 import { createApp } from '../src/app.js';
+import { createWebServer } from '../src/server.js';
 import { configFromEnv } from '../src/config.js';
 import { GameAccount } from '../src/game-account.js';
 import { GameApi } from '../src/game-api.js';
@@ -66,12 +67,13 @@ const gameApi = new GameApi(config, async (url, options) => {
 }); await gameApi.init();
 runtime.gameApi = gameApi;
 const app = createApp(config, store, runtime, account, gameApi);
-const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
-const origin = `http://127.0.0.1:${server.address().port}`;
+const server = await createWebServer(config, app); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+const origin = `https://127.0.0.1:${server.address().port}`;
 let uiBrowser;
 try {
   uiBrowser = await chromium.launch({ headless: true });
-  const page = await uiBrowser.newPage({ viewport: { width: 1440, height: 1100 } });
+  // The generated certificate is self-signed; Chromium would otherwise show its interstitial.
+  const page = await uiBrowser.newPage({ viewport: { width: 1440, height: 1100 }, ignoreHTTPSErrors: true });
   page.setDefaultTimeout(15_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

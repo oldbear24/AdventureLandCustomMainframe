@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import https from 'node:https';
 import { GameAccount } from '../src/game-account.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
@@ -130,13 +131,13 @@ test('redaction and deadline protect logs and a stuck game page', async t => {
   const url = new URL(characterUrl({ name: 'Warrior', region: 'EU', server: 'I' }));
   assert.equal(url.origin, 'https://adventure.land'); assert.equal(url.searchParams.get('no_graphics'), 'true'); assert.equal(url.searchParams.has('code'), false);
 });
-test('the actual Node 22 startup command serves the panel without game credentials', async t => {
+test('the actual Node 22 startup command generates a certificate and serves the panel only over HTTPS', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-startup-'));
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   const child = spawn(process.execPath, ['src/bootstrap.js'], {
     cwd: fileURLToPath(new URL('../', import.meta.url)),
-    env: { ...process.env, ADMIN_PASSWORD: config().password, AL_AUTH_COOKIE: '', TLS_ENABLED: 'false', COOKIE_SECURE: 'false', PUBLIC_ORIGIN: '', PORT: String(port), HOST: '127.0.0.1', DATA_DIR: directory },
+    env: { ...process.env, ADMIN_PASSWORD: config().password, AL_AUTH_COOKIE: '', TLS_CERT_FILE: '', TLS_KEY_FILE: '', TLS_HOSTNAMES: '', PUBLIC_ORIGIN: '', PORT: String(port), HOST: '127.0.0.1', DATA_DIR: directory },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
@@ -150,9 +151,18 @@ test('the actual Node 22 startup command serves the panel without game credentia
     child.on('error', reject); child.on('exit', code => reject(new Error(`Startup exited ${code}: ${text}`)));
   }), 10_000);
   assert.match(output, /Adventure Land Mainframe/);
-  assert.equal((await fetch(`http://127.0.0.1:${port}/healthz`)).status, 200);
-  const response = await fetch(`http://127.0.0.1:${port}/`);
-  assert.equal(response.status, 200); assert.match(await response.text(), /Vlastní mainframe/);
+  assert.match(output, new RegExp(`https://127\.0\.0\.1:${port}`));
+  const ca = await readFile(path.join(directory, 'tls', 'cert.pem'));
+  const get = (endpoint, options = {}) => new Promise((resolve, reject) => {
+    https.get(`https://127.0.0.1:${port}${endpoint}`, { ca, ...options }, response => {
+      let text = ''; response.on('data', chunk => { text += chunk; }); response.on('end', () => resolve({ status: response.statusCode, text }));
+    }).on('error', reject);
+  });
+  assert.equal((await get('/healthz')).status, 200);
+  const response = await get('/');
+  assert.equal(response.status, 200); assert.match(response.text, /Vlastní mainframe/);
+  await assert.rejects(get('/healthz', { ca: undefined }), /self-signed|self signed/i);
+  await assert.rejects(fetch(`http://127.0.0.1:${port}/healthz`));
 });
 test('game account login only authenticates existing accounts and stores an encrypted session without the password', async t => {
   let calls = 0;

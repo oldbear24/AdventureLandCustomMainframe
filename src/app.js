@@ -31,14 +31,14 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
-      const expected = config.publicOrigin || `${config.cookieSecure ? 'https' : 'http'}://${req.get('host')}`;
+      const expected = config.publicOrigin || `${req.protocol}://${req.get('host')}`;
       if (req.get('origin') !== expected) return res.status(403).json({ error: 'Neplatný Origin. Použij panel nebo nastav PUBLIC_ORIGIN.' });
       if (!req.is('application/json')) return res.status(415).json({ error: 'Vyžadováno application/json.' });
     }
     next();
   });
   app.use(express.json({ limit: '1mb' }));
-  const cookieOptions = { httpOnly: true, secure: config.cookieSecure, sameSite: 'strict', path: '/', maxAge: 12 * 60 * 60 * 1000 };
+  const cookieOptions = { httpOnly: true, secure: true, sameSite: 'strict', path: '/', maxAge: 12 * 60 * 60 * 1000 };
   const sessionFor = req => {
     const token = (req.get('cookie') || '').split(';').map(c => c.trim()).find(c => c.startsWith('mf_session='))?.slice(11);
     const session = token && sessions.get(token);
@@ -69,7 +69,6 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.get('/api/account', (_req, res) => res.json(account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null }));
   app.use('/api/account', (req, _res, next) => {
     if (!account) throw new HttpError(503, 'Připojení herního účtu není dostupné.');
-    if (req.method === 'POST' && !(req.secure || config.publicOrigin.startsWith('https://') || ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip))) throw new HttpError(426, 'Pro přihlášení herního účtu použij HTTPS nebo místní SSH tunel.');
     next();
   });
   app.use('/api/account', (req, res, next) => {

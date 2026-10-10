@@ -10,10 +10,8 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       DATA_DIR: /app/data
-      TLS_ENABLED: "true"
       TLS_CERT_FILE: /app/certs/fullchain.pem
       TLS_KEY_FILE: /app/certs/privkey.pem
-      COOKIE_SECURE: "true"
     ports:
       - "${HTTPS_BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:3000"
     volumes:

@@ -1,4 +1,11 @@
 # Změň doménu a DNS nasměruj na svůj server. Caddy zde běží přímo na hostiteli.
+# Mainframe obsluhuje jen HTTPS se self-signed certifikátem; spojení na loopback proto
+# neověřuje certifikát. Pro ověření nahraď tls_insecure_skip_verify řádkem
+# tls_trust_pool file /cesta/mainframe-cert.pem (zkopírovaný z /app/data/tls/cert.pem).
 al.example.cz {
-    reverse_proxy 127.0.0.1:3000
+    reverse_proxy https://127.0.0.1:3000 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
 }

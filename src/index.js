@@ -7,13 +7,14 @@ import { GameAccount } from './game-account.js';
 import { GameApi } from './game-api.js';
 
 const config = configFromEnv();
+for (const warning of config.warnings) console.warn(warning);
 const store = new Store(config.dataDir); await store.init();
 const gameApi = new GameApi(config); await gameApi.init();
 const runtime = new Runtime(config, store, undefined, gameApi);
 const account = new GameAccount(config, runtime); await account.init();
 const app = createApp(config, store, runtime, account, gameApi);
 const server = await createWebServer(config, app);
-server.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: ${config.tls.enabled ? 'https' : 'http'}://${config.host}:${config.port}`));
+server.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: https://${config.host}:${config.port}`));
 server.on('error', error => { console.error(error.message); process.exit(1); });
 let stopping = false;
 async function shutdown() {

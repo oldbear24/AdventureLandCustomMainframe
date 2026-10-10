@@ -74,7 +74,7 @@ jobs:
             org.opencontainers.image.description=Self-hosted Adventure Land character runtime and control panel
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke test application and Chromium inside image
+      - name: Smoke test generated-certificate HTTPS and Chromium inside image
         env:
           IMAGE: ${{ steps.image.outputs.commit }}
         shell: bash
@@ -84,17 +84,20 @@ jobs:
             --publish 127.0.0.1:3000:3000 \
             --env ADMIN_PASSWORD=ci-smoke-test-password-only \
             "$IMAGE"
-          trap 'docker logs mainframe-smoke; docker rm --force mainframe-smoke' EXIT
+          cert="$(mktemp)"
+          trap 'docker logs mainframe-smoke; docker rm --force mainframe-smoke; rm -f "$cert"' EXIT
           ready=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:3000/healthz; then
+            if docker exec mainframe-smoke cat /app/data/tls/cert.pem > "$cert" 2>/dev/null               && curl --fail --silent --cacert "$cert" https://localhost:3000/healthz; then
               ready=true
               break
             fi
             sleep 1
           done
           test "$ready" = true
-          curl --fail --silent http://127.0.0.1:3000/ | grep -q 'Vlastní mainframe'
+          curl --fail --silent --cacert "$cert" https://127.0.0.1:3000/ | grep -q 'Vlastní mainframe'
+          if curl --silent --max-time 5 http://127.0.0.1:3000/healthz; then echo "HTTP must not be served"; exit 1; fi
+          docker exec mainframe-smoke node src/healthcheck.js
           docker exec mainframe-smoke node --input-type=module -e '
             import assert from "node:assert/strict";
             import { chromium } from "playwright";
@@ -130,7 +133,7 @@ jobs:
             --mount "type=bind,source=$certs,target=/app/certs,readonly" \
             --env ADMIN_USERNAME=tls-operator \
             --env ADMIN_PASSWORD=ci-smoke-test-password-only \
-            --env TLS_ENABLED=true \
+\
             --env TLS_CERT_FILE=/app/certs/fullchain.pem \
             --env TLS_KEY_FILE=/app/certs/privkey.pem \
             --env PUBLIC_ORIGIN=https://localhost:3443 \
@@ -167,5 +170,5 @@ jobs:
             echo "- Latest: \`$LATEST_IMAGE\`"
             echo "- This commit: \`$COMMIT_IMAGE\`"
             echo '- Platform: linux/amd64'
-            echo '- Backend, browser bridge, HTTP/HTTPS login, TLS healthcheck and Chromium smoke tests passed.'
+            echo '- Backend, browser bridge, generated and own-certificate HTTPS login, TLS healthcheck and Chromium smoke tests passed.'
           } >> "$GITHUB_STEP_SUMMARY"

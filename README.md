@@ -35,7 +35,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - Volitelný autostart uložených postav po restartu. Tlačítko Stop autostart dané postavy vypne.
 - Přihlášení do panelu jménem a heslem; HttpOnly session cookie, omezení pokusů o přihlášení, kontrola Origin a validace vstupů.
 - Přihlášení k Adventure Land e-mailem a heslem přímo z panelu; pro Steam účet také vložení herní cookie. Herní relace se ukládá šifrovaně, herní heslo se neukládá.
-- Přímé HTTPS s vlastním PEM certifikátem a klíčem, nebo provoz za HTTPS proxy.
+- Pouze HTTPS: při prvním startu si aplikace sama vygeneruje self-signed certifikát, nebo použije tvůj vlastní PEM certifikát a klíč. HTTP neobsluhuje vůbec.
 - API token „Connect an AI“: výpis postav účtu, import postav a synchronizace CODE slotů. Pro spouštění přiřazeného CODE je token potřebný.
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 1 000 záznamů).
@@ -61,7 +61,7 @@ ADMIN_USERNAME=admin
 
 Pokud používáš Steam a nemáš samostatné herní heslo, otevři v dialogu **Steam účet nebo přihlášení pomocí cookie**. Cookie zjistíš po přihlášení na **https://adventure.land** v nástrojích pro vývojáře → Application / Storage → Cookies → `auth`. Vlož pouze její hodnotu, nikoli `auth=`. Pokud hra používá jiné jméno cookie, nastav `AL_COOKIE_NAME`. **Token z „Connect an AI“ / MCP neslouží k přihlášení herního klientu.**
 
-Alternativně lze cookie nastavit přes `AL_AUTH_COOKIE` v `.env`. Uložená relace z panelu má přednost před touto proměnnou, včetně odhlášení. Pro výměnu použij dialog v panelu. Přihlašovací údaje přijímá herní dialog přes HTTPS nebo lokální spojení, například SSH tunel.
+Alternativně lze cookie nastavit přes `AL_AUTH_COOKIE` v `.env`. Uložená relace z panelu má přednost před touto proměnnou, včetně odhlášení. Pro výměnu použij dialog v panelu.
 
 ```bash
 chmod 600 .env
@@ -75,7 +75,26 @@ Panel je záměrně dostupný na serveru pouze přes `127.0.0.1:3000`. Pro prvn�
 ssh -L 3000:127.0.0.1:3000 uzivatel@tvuj-server
 ```
 
-Pak otevři **http://localhost:3000** a přihlas se jménem `ADMIN_USERNAME` a heslem `ADMIN_PASSWORD`. Pro SSH tunel ponech `TLS_ENABLED=false`, `COOKIE_SECURE=false` a `PUBLIC_ORIGIN` prázdné.
+Pak otevři **https://localhost:3000** a přihlas se jménem `ADMIN_USERNAME` a heslem `ADMIN_PASSWORD`. Prohlížeč nejdřív upozorní na nedůvěryhodný certifikát – viz další oddíl.
+
+### HTTPS a automaticky generovaný certifikát
+
+Panel běží **vždy a jen přes HTTPS** na portu `PORT` (výchozí 3000); HTTP požadavky nepřijímá a session cookie je vždy `Secure`. Pokud nenastavíš vlastní certifikát, aplikace při startu vytvoří self-signed certifikát (ECDSA P-256, platnost 1 rok) a uloží ho do datového adresáře:
+
+```text
+/app/data/tls/cert.pem   (v Dockeru, volume mainframe-data)
+/app/data/tls/key.pem    (práva 600)
+```
+
+Certifikát platí pro `localhost`, `127.0.0.1`, `::1`, hostitele z `PUBLIC_ORIGIN` a pro názvy z `TLS_HOSTNAMES` (čárkami oddělené DNS jména nebo IP adresy, např. `TLS_HOSTNAMES=192.168.1.20,nas.lan`). Při dalších startech se znovu použije. Nový se vytvoří, pokud chybí, nepatří k uloženému klíči, nepokrývá všechny požadované názvy nebo mu zbývá méně než 30 dní platnosti; běžící server to kontroluje každých 12 hodin a nový certifikát načte bez restartu.
+
+Při vytvoření certifikátu vypíše log jeho otisk SHA-256 (`docker compose logs mainframe | grep SHA-256`). Porovnej ho s otiskem v prohlížeči a výjimku potvrď, nebo certifikát importuj jako důvěryhodný:
+
+```bash
+docker compose cp mainframe:/app/data/tls/cert.pem ./mainframe-cert.pem
+```
+
+Po změně `PUBLIC_ORIGIN` nebo `TLS_HOSTNAMES` se vytvoří nový certifikát a dříve importovaný přestane platit. Pro veřejnou doménu raději použij certifikát od důvěryhodné autority (následující oddíl).
 
 ### Přímé HTTPS s vlastním SSL certifikátem
 
@@ -109,34 +128,31 @@ docker compose -f compose.https.yaml up -d
 docker compose -f compose.https.yaml logs -f --tail=100
 ```
 
-Otevři `https://al.tvoje-domena.cz`. Tento Compose soubor zapíná TLS a Secure cookies automaticky a publikuje pouze HTTPS port. `TLS_CERTS_DIR` může být i absolutní cesta k připravenému adresáři s certifikáty. Při změně portu například na `8443` nastav také `PUBLIC_ORIGIN=https://al.tvoje-domena.cz:8443`. Po obnovení certifikátu restartuj kontejner; certifikáty se načítají při startu. Certifikát musí odpovídat doméně a být platný, protože healthcheck ověřuje TLS včetně jména a důvěry certifikátu.
+Otevři `https://al.tvoje-domena.cz`. Tento Compose soubor publikuje HTTPS port veřejně a místo generovaného certifikátu používá připojené soubory. `TLS_CERTS_DIR` může být i absolutní cesta k připravenému adresáři s certifikáty. Při změně portu například na `8443` nastav také `PUBLIC_ORIGIN=https://al.tvoje-domena.cz:8443`. Obnovený certifikát (např. od Let's Encrypt) aplikace sama načte nejpozději do 12 hodin; pro okamžité použití restartuj kontejner. Certifikát musí odpovídat doméně a být platný, protože healthcheck ověřuje TLS včetně jména a důvěry certifikátu.
 
 Pro spuštění přes Node.js nebo vlastní Docker konfiguraci nastav:
 
 ```dotenv
-TLS_ENABLED=true
 TLS_CERT_FILE=/cesta/fullchain.pem
 TLS_KEY_FILE=/cesta/privkey.pem
 PUBLIC_ORIGIN=https://al.tvoje-domena.cz
 ```
 
-Použije se stávající `PORT` (výchozí 3000), tentokrát pro HTTPS. Při nečitelném nebo neplatném certifikátu aplikace nenastartuje a nepřejde automaticky na HTTP. Vlastní privátní CA musí být součástí řetězce v `fullchain.pem`, aby ji interní healthcheck mohl ověřit. Pro veřejnou doménu použij certifikát od důvěryhodné certifikační autority; lokální testy používají vlastní krátkodobý certifikát.
+Použije se stávající `PORT` (výchozí 3000), tentokrát pro HTTPS. Při nečitelném nebo neplatném certifikátu aplikace nenastartuje; na generovaný certifikát ani na HTTP automaticky nepřejde. Vlastní privátní CA musí být součástí řetězce v `fullchain.pem`, aby ji interní healthcheck mohl ověřit. Pro veřejnou doménu použij certifikát od důvěryhodné certifikační autority; lokální testy používají vlastní krátkodobý certifikát.
 
 ### HTTPS přes reverzní proxy
 
-Příklad pro Caddy na hostiteli je v `deploy/Caddyfile.example`. Doménu změň na svou, nastav DNS, nakonfiguruj Caddy a v `.env` zadej:
+Příklad pro Caddy na hostiteli je v `deploy/Caddyfile.example`. Proxy se k aplikaci připojuje také přes HTTPS (k generovanému certifikátu). Doménu změň na svou, nastav DNS, nakonfiguruj Caddy a v `.env` zadej:
 
 ```dotenv
-COOKIE_SECURE=true
 PUBLIC_ORIGIN=https://al.tvoje-domena.cz
-TLS_ENABLED=false
 ```
 
 ```bash
 docker compose up -d --force-recreate
 ```
 
-Pokud proxy běží v jiném kontejneru, její `127.0.0.1` není hostitel: připoj ji do stejné Docker sítě a proxyuj na `mainframe:3000`. Port 3000 nevyžaduje veřejné zpřístupnění. Panel je pro jednoho správce; CODE spouštěj pouze vlastní nebo důvěryhodný, protože má oprávnění tvého herního účtu.
+Pokud proxy běží v jiném kontejneru, její `127.0.0.1` není hostitel: připoj ji do stejné Docker sítě, proxyuj na `https://mainframe:3000` a přidej `mainframe` do `TLS_HOSTNAMES`. Port 3000 nevyžaduje veřejné zpřístupnění. Panel je pro jednoho správce; CODE spouštěj pouze vlastní nebo důvěryhodný, protože má oprávnění tvého herního účtu.
 
 ## První postava
 
@@ -199,7 +215,7 @@ docker compose down
 docker compose cp mainframe:/app/data/state.json ./mainframe-backup.json
 ```
 
-Na novém serveru vytvoř kontejner, zastav běžící aplikaci, obnov `state.json` do volume s vlastníkem UID 1000 a aplikaci znovu spusť. Herní relace se ukládá pomocí AES-256-GCM do `account.enc.json`; klíč je v `account.key` s právy 600. Pro obnovu přihlášení zálohuj a obnov **oba tyto soubory společně**. Šifrování chrání samostatný soubor relace; přístup k celému volume včetně klíče umožňuje relaci dešifrovat. `.env` a certifikáty zálohuj zvlášť. Session cookie panelu zanikne při restartu; přihlásíš se znovu. Docker automaticky obnovuje ukončený kontejner, herní spojení obnovuje runtime. Samotný stav Docker healthchecku `unhealthy` automatický restart nezpůsobuje.
+Na novém serveru vytvoř kontejner, zastav běžící aplikaci, obnov `state.json` do volume s vlastníkem UID 1000 a aplikaci znovu spusť. Herní relace se ukládá pomocí AES-256-GCM do `account.enc.json`; klíč je v `account.key` s právy 600. Pro obnovu přihlášení zálohuj a obnov **oba tyto soubory společně**. Šifrování chrání samostatný soubor relace; přístup k celému volume včetně klíče umožňuje relaci dešifrovat. Generovaný TLS certifikát je ve stejném volume v `tls/`; vlastní `.env` a certifikáty zálohuj zvlášť. Session cookie panelu zanikne při restartu; přihlásíš se znovu. Docker automaticky obnovuje ukončený kontejner, herní spojení obnovuje runtime. Samotný stav Docker healthchecku `unhealthy` automatický restart nezpůsobuje.
 
 ## Lokální vývoj (Node.js 22+)
 
@@ -220,7 +236,7 @@ Na Linuxu mimo Docker může být potřeba `npx playwright install --with-deps c
 
 ## Ověření a hranice
 
-Testy ověřují přihlášení do panelu i herního účtu, šifrování relace a API tokenu, seznam a import postav, import a ukládání společných CODE slotů, synchronizaci více runnerů, odmítnutí staré verze editoru, pozastavení CODE při výpadku API i obnovu z aktuálního slotu, náhledy převodů, ochranu proti opakovanému odeslání, změnu inventáře, přístup k API, skutečné HTTPS s testovacím certifikátem, Secure cookie, kontrolu jména certifikátu, ukládání, lifecycle runtime a obnovu po výpadku. Samostatný `npm run test:browser` ověřuje panel i browser bridge v reálném Chromium s lokální napodobeninou herního klientu včetně synchronizace CODE a převodu zlata a předmětů. GitHub Actions také ověřuje HTTP i HTTPS přímo v sestaveném Docker image. Bez tvých herních přihlašovacích údajů nebylo ověřeno živé přihlášení, API token ani skutečný herní převod.
+Testy ověřují přihlášení do panelu i herního účtu, šifrování relace a API tokenu, seznam a import postav, import a ukládání společných CODE slotů, synchronizaci více runnerů, odmítnutí staré verze editoru, pozastavení CODE při výpadku API i obnovu z aktuálního slotu, náhledy převodů, ochranu proti opakovanému odeslání, změnu inventáře, přístup k API, generování, opakované použití a obnovu self-signed certifikátu, skutečné HTTPS s generovaným i vlastním certifikátem, odmítnutí HTTP, Secure cookie, kontrolu jména certifikátu, ukládání, lifecycle runtime a obnovu po výpadku. Samostatný `npm run test:browser` ověřuje panel i browser bridge v reálném Chromium s lokální napodobeninou herního klientu včetně synchronizace CODE a převodu zlata a předmětů. GitHub Actions také ověřuje HTTPS s generovaným i vlastním certifikátem přímo v sestaveném Docker image. Bez tvých herních přihlašovacích údajů nebylo ověřeno živé přihlášení, API token ani skutečný herní převod.
 
 Runtime načítá aktuální klient ze hry, takže změna jejích přihlašovacích nebo CODE funkcí může vyžadovat úpravu adaptéru `src/runtime.js`. Kontrola online stavu omezuje duplicitní spuštění, ale souběžné přihlášení z jiného klientu mezi kontrolou a připojením není možné z tohoto panelu atomicky zablokovat. Jedno Chromium sdílí proces browseru; postavy mají oddělené contexty, nikoli samostatné kontejnery. Logy se nedrží po restartu a nejde o systém pro provoz více nezávislých zákaznických účtů.
 
