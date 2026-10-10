@@ -325,24 +325,38 @@ export class Runtime extends EventEmitter {
     // The page pushes changed state itself, so the live map does not wait for the 5 s tick.
     await page.exposeFunction('__mainframeState', json => this.pushState(session, page, json));
     await withDeadline(page.evaluate(interval => {
+      // Without graphics the game moves entities only when it draws, about every 300 ms while CODE runs and every
+      // 15 s otherwise, so real_x lags behind the sampling time by a varying amount. Positions are carried forward
+      // from the last draw to the given time the way the game's draw and stop_logic would move them.
+      const position = window.__mainframePosition = (e, now) => {
+        let x = e.real_x ?? e.x, y = e.real_y ?? e.y;
+        const since = Math.min(Math.max(now - (window.last_draw?.getTime?.() ?? now), 0), 20_000) / 1000;
+        if (since && e.moving && Number.isFinite(e.vx) && Number.isFinite(e.vy) && Number.isFinite(e.going_x) && Number.isFinite(e.going_y)) {
+          x += e.vx * since; y += e.vy * since;
+          if (e.vx > 0 ? x > e.going_x : e.vx < 0 && x < e.going_x) x = e.going_x;
+          if (e.vy > 0 ? y > e.going_y : e.vy < 0 && y < e.going_y) y = e.going_y;
+        }
+        return [x, y];
+      };
       window.__mainframeSnapshot = () => {
         const c = window.character;
         if (!c || !window.socket?.connected) return null;
-        const x = c.real_x ?? c.x, y = c.real_y ?? c.y;
+        const now = Date.now(), [x, y] = position(c, now);
         // Nearest visible monsters and players for the live map.
         const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
-          .map(e => ({ id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
+          .map(e => { const [ex, ey] = position(e, now); return { id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(ex), y: Math.round(ey), target: e.target === c.name }; })
           .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
-        return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null };
+        return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now };
       };
       clearInterval(window.__mainframeTimer);
       let last = '';
       window.__mainframeTimer = setInterval(() => {
         const state = window.__mainframeSnapshot();
-        const json = state && JSON.stringify(state);
-        if (!json || json === last) return;
+        if (!state) return;
+        const { at, ...rest } = state, json = JSON.stringify(rest);
+        if (json === last) return;
         // The sampling time lets the map replay movement at its real pace, whatever the delivery delays.
-        last = json; window.__mainframeState(JSON.stringify({ ...state, at: Date.now() })).catch(() => {});
+        last = json; window.__mainframeState(JSON.stringify(state)).catch(() => {});
       }, interval);
     }, LIVE_INTERVAL));
     await this.loadScript(session, prefetched);
@@ -673,12 +687,14 @@ export class Runtime extends EventEmitter {
         session.state = await withDeadline(session.page.evaluate(() => {
           const c = window.character;
           if (!c || !window.socket?.connected) return null;
-          const x = c.real_x ?? c.x, y = c.real_y ?? c.y;
+          // Positions carried forward from the game's last draw, as in the page's own samples.
+          const G = window.G || {}, now = Date.now(), position = window.__mainframePosition || (e => [e.real_x ?? e.x, e.real_y ?? e.y]);
+          const [x, y] = position(c, now);
           // Nearest visible monsters and players for the live map.
           const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
-            .map(e => ({ id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
+            .map(e => { const [ex, ey] = position(e, now); return { id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(ex), y: Math.round(ey), target: e.target === c.name }; })
             .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
-          const G = window.G || {}, now = Date.now(), items = Array.isArray(c.items) ? c.items : [];
+          const items = Array.isArray(c.items) ? c.items : [];
           const count = pattern => items.reduce((sum, item) => sum + (item && pattern.test(item.name) ? (item.q || 1) : 0), 0);
           // Active conditions (character.s) classified by the game's own definitions.
           const conditions = Object.entries(c.s && typeof c.s === 'object' ? c.s : {}).filter(([, value]) => value && typeof value === 'object').map(([key, value]) => {
@@ -695,7 +711,7 @@ export class Runtime extends EventEmitter {
             return { key, name: G.skills?.[key]?.name, ms: Number.isFinite(at) ? at - now : 0, cooldown };
           });
           const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
-          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: Date.now(),
+          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now,
             // Server-wide events and bosses with their game names; sanitized by serverEventsView.
             // A value that cannot be copied must not fail the whole reading of the character.
             server: (() => {
