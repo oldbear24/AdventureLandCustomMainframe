@@ -341,7 +341,7 @@ export class Runtime extends EventEmitter {
       .map(key => ({ key: key.slice(prefix.length), value: window.localStorage.getItem(key) })), STORAGE_PREFIX));
     return entries.map(e => ({ ...e, key: this.redact(e.key), value: typeof e.value === 'string' ? this.redact(e.value) : e.value }));
   }
-  // Writes a JSON text exactly as CODE set(key, value) would; null removes the key like set(key, undefined).
+  // Writes a JSON text exactly as CODE set(key, value) would; null removes the key so get(key) returns null.
   async setStorage(id, key, value) {
     const session = this.sessions.get(id);
     if (!session || session.status !== 'running') throw Object.assign(new Error('Postava není připojena.'), { status: 409 });
