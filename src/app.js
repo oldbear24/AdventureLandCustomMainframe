@@ -353,7 +353,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   // A panel with a live WebSocket receives logs there and asks for the dashboard without them (?logs=0).
   app.get('/api/dashboard', (req, res) => res.json({
-    characters: store.snapshot().characters, looks: store.snapshot().looks, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
+    characters: store.snapshot().characters, looks: store.snapshot().looks, stands: store.snapshot().stands, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
     sessions: runtime.snapshot(), logs: req.query.logs === '0' ? undefined : runtime.logs,
     config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters, notifications: runtime.notifier?.status() || { discord: false, telegram: false } },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
@@ -452,7 +452,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.delete('/api/characters/:id', async (req, res) => {
     await runtime.exclusive(async () => {
       await runtime.stopInternal(req.params.id); runtime.forget(req.params.id);
-      await store.update(state => { state.characters = state.characters.filter(c => c.id !== req.params.id); delete state.looks[req.params.id]; });
+      await store.update(state => { state.characters = state.characters.filter(c => c.id !== req.params.id); delete state.looks[req.params.id]; delete state.stands[req.params.id]; });
     }); res.json({ ok: true });
   });
   app.post('/api/characters/:id/:action', async (req, res) => {

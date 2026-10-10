@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import { chromium } from 'playwright';
 import { Store } from '../src/store.js';
@@ -247,6 +248,30 @@ try {
   await gamePage.evaluate(() => { window.character.x = 137; window.character.y = -41; });
   await page.waitForFunction(() => document.getElementById('map-canvas').scene.own[0]?.x === 137, null, { timeout: 3000 });
   scene = await mapScene(); assert.equal(scene.own[0].y, -41);
+  // Stands: the running character's open stand and a nearby player's stand are marked. The open stand is saved,
+  // a saved stand of a character not running is drawn, and a stand seen closed is forgotten.
+  await gamePage.evaluate(() => { window.character.stand = 'stand0'; window.entities.p1.stand = 'stand0'; });
+  await runtime.exclusive(() => runtime.tick());
+  await page.waitForFunction(() => { const scene = document.getElementById('map-canvas').scene; return scene.own[0]?.stand && scene.nearby.some(e => e.name === 'Stranger' && e.stand); });
+  const sellerId = store.snapshot().characters[0].id;
+  assert.equal(store.snapshot().stands[sellerId].map, 'main');
+  await page.waitForFunction(() => document.querySelector('#map-characters').textContent.includes('stánek otevřený'));
+  const offlineSeller = randomUUID();
+  await store.update(state => {
+    state.characters.push({ id: offlineSeller, name: 'OfflineSeller', region: 'EU', server: 'I', scriptId: null, autoStart: false, idleMinutes: 10, autoReloadIdle: false, potionMin: 10 });
+    state.stands[offlineSeller] = { map: 'main', x: -120, y: 80, realm: 'EU I', seenAt: new Date().toISOString() };
+  });
+  await page.waitForFunction(() => document.getElementById('map-canvas').scene.stands.some(s => s.name === 'OfflineSeller' && s.x === -120));
+  await page.waitForFunction(() => document.querySelector('#map-characters').textContent.includes('OfflineSeller · stánek'));
+  await page.locator('#map-fit').click();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.ok(await page.evaluate(() => document.getElementById('map-canvas').hits.some(h => h.type === 'stand' && h.tip.includes('OfflineSeller'))));
+  await page.screenshot({ path: 'test-results/map-stands.png' });
+  await store.update(state => { state.characters = state.characters.filter(c => c.id !== offlineSeller); delete state.stands[offlineSeller]; });
+  await gamePage.evaluate(() => { window.character.stand = false; delete window.entities.p1.stand; });
+  await runtime.exclusive(() => runtime.tick());
+  assert.deepEqual(store.snapshot().stands, {});
+  await page.waitForFunction(() => { const scene = document.getElementById('map-canvas').scene; return !scene.own[0]?.stand && !scene.stands.length; });
   // Clicking a door drawn on the canvas switches to the neighbouring map.
   await page.locator('#map-fit').click();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));

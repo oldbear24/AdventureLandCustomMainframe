@@ -33,6 +33,8 @@ export const savedScriptSchema = scriptSchema.extend({
 const LOOK_KEY = /^[a-zA-Z0-9_]{1,40}$/;
 // Last seen skin and cosmetics of each character, keyed by character id.
 const lookSchema = z.object({ skin: z.string().regex(LOOK_KEY), cx: z.record(z.string().regex(/^[a-z]{1,16}$/), z.string().regex(LOOK_KEY)) });
+// Last place each character was seen with its merchant stand open, keyed by character id.
+const standSchema = z.object({ map: z.string().max(40), x: z.number().finite(), y: z.number().finite(), realm: z.string().max(40), seenAt: z.string().max(40) }).strict();
 // Panel-wide preferences; older state files without them get the defaults.
 export const settingsSchema = z.object({
   // Server events and bosses (S keys such as franky) whose start is sent to Discord/Telegram.
@@ -43,11 +45,12 @@ const stateSchema = z.object({
   characters: z.array(characterSchema.extend({ id: z.string().uuid(), controls: savedControlsSchema.optional() })),
   scripts: z.array(savedScriptSchema),
   looks: z.record(z.string(), lookSchema).default({}),
+  stands: z.record(z.string(), standSchema).default({}),
   settings: settingsSchema.default({ notifyEvents: [] }),
 });
 
 export class Store {
-  constructor(dir) { this.dir = dir; this.state = { version: 1, characters: [], scripts: [], looks: {}, settings: { notifyEvents: [] } }; this.queue = Promise.resolve(); }
+  constructor(dir) { this.dir = dir; this.state = { version: 1, characters: [], scripts: [], looks: {}, stands: {}, settings: { notifyEvents: [] } }; this.queue = Promise.resolve(); }
   async init() {
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     try { this.state = stateSchema.parse(JSON.parse(await readFile(path.join(this.dir, 'state.json'), 'utf8'))); }

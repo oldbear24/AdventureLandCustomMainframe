@@ -8,6 +8,8 @@ export const GAME_ORIGIN = 'https://adventure.land';
 export const LOG_LIMIT = 200;
 // How often the game page pushes a changed position to the panel.
 export const LIVE_INTERVAL = 250;
+// How often an open stand that has not moved is saved again.
+export const STAND_REFRESH = 10 * 60_000;
 export async function withDeadline(operation, milliseconds = 15_000) {
   let timer;
   try {
@@ -35,12 +37,12 @@ export function sanitizeState(raw) {
   const num = value => Number.isFinite(value) ? value : 0;
   const str = (value, max = 40) => typeof value === 'string' ? value.slice(0, max) : '';
   const nearby = (Array.isArray(state.nearby) ? state.nearby.slice(0, 60) : []).filter(e => e && Number.isFinite(e.x) && Number.isFinite(e.y))
-    .map(e => ({ id: str(e.id), kind: e.kind === 'monster' ? 'monster' : 'character', name: str(e.name), x: Math.round(e.x), y: Math.round(e.y), target: !!e.target }));
+    .map(e => ({ id: str(e.id), kind: e.kind === 'monster' ? 'monster' : 'character', name: str(e.name), x: Math.round(e.x), y: Math.round(e.y), target: !!e.target, stand: e.kind !== 'monster' && !!e.stand }));
   // When the game page sampled the state (server clock); a missing or implausible time falls back to now.
   const at = Number.isFinite(state.at) && Math.abs(state.at - Date.now()) < 60_000 ? Math.round(state.at) : Date.now();
   return {
     name: str(state.name, 32), ctype: str(state.ctype, 20), level: num(state.level), hp: num(state.hp), max_hp: num(state.max_hp), mp: num(state.mp), max_mp: num(state.max_mp),
-    gold: num(state.gold), xp: num(state.xp), map: str(state.map), x: num(state.x), y: num(state.y), rip: !!state.rip, ping: num(state.ping),
+    gold: num(state.gold), xp: num(state.xp), map: str(state.map), x: num(state.x), y: num(state.y), rip: !!state.rip, ping: num(state.ping), stand: !!state.stand,
     codeRunning: !!state.codeRunning, nearby, target: typeof state.target === 'string' ? state.target.slice(0, 40) : null, at, observedAt: new Date().toISOString(),
   };
 }
@@ -344,9 +346,9 @@ export class Runtime extends EventEmitter {
         const now = Date.now(), [x, y] = position(c, now);
         // Nearest visible monsters and players for the live map.
         const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
-          .map(e => { const [ex, ey] = position(e, now); return { id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(ex), y: Math.round(ey), target: e.target === c.name }; })
+          .map(e => { const [ex, ey] = position(e, now); return { id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(ex), y: Math.round(ey), target: e.target === c.name, stand: e.type !== 'monster' && !!e.stand }; })
           .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
-        return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now };
+        return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, stand: !!c.stand, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now };
       };
       clearInterval(window.__mainframeTimer);
       let last = '';
@@ -692,7 +694,7 @@ export class Runtime extends EventEmitter {
           const [x, y] = position(c, now);
           // Nearest visible monsters and players for the live map.
           const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
-            .map(e => { const [ex, ey] = position(e, now); return { id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(ex), y: Math.round(ey), target: e.target === c.name }; })
+            .map(e => { const [ex, ey] = position(e, now); return { id: String(e.id ?? e.name ?? '').slice(0, 40), kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(ex), y: Math.round(ey), target: e.target === c.name, stand: e.type !== 'monster' && !!e.stand }; })
             .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
           const items = Array.isArray(c.items) ? c.items : [];
           const count = pattern => items.reduce((sum, item) => sum + (item && pattern.test(item.name) ? (item.q || 1) : 0), 0);
@@ -711,7 +713,7 @@ export class Runtime extends EventEmitter {
             return { key, name: G.skills?.[key]?.name, ms: Number.isFinite(at) ? at - now : 0, cooldown };
           });
           const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
-          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now,
+          return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, stand: !!c.stand, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: now,
             // Server-wide events and bosses with their game names; sanitized by serverEventsView.
             // A value that cannot be copied must not fail the whole reading of the character.
             server: (() => {
@@ -728,6 +730,7 @@ export class Runtime extends EventEmitter {
         session.server = serverEventsView(server);
         this.emit('state', session.id, session.state);
         await this.rememberLook(session, look).catch(error => this.log(session.id, 'error', `Vzhled postavy se nepodařilo uložit: ${this.redact(error.message)}`));
+        await this.rememberStand(session).catch(error => this.log(session.id, 'error', `Pozici stánku se nepodařilo uložit: ${this.redact(error.message)}`));
         await this.observe(session, previous);
       } catch (error) { session.state = null; this.failed(session, error); }
     }
@@ -742,6 +745,18 @@ export class Runtime extends EventEmitter {
   async rememberLook(session, look) {
     if (!look || JSON.stringify(this.store.state.looks?.[session.id]) === JSON.stringify(look)) return;
     await this.store.update(state => { if (state.characters.some(c => c.id === session.id)) state.looks[session.id] = look; });
+  }
+  // Where the character was last seen with its merchant stand open, so the map shows it while the character is offline.
+  // A stand seen closed is forgotten; an unchanged one is saved again at most every STAND_REFRESH to keep the time current.
+  async rememberStand(session) {
+    const state = session.state, saved = this.store.state.stands?.[session.id];
+    if (!state.stand) {
+      if (saved) await this.store.update(next => { delete next.stands[session.id]; });
+      return;
+    }
+    const now = Date.now(), stand = { map: state.map, x: Math.round(state.x), y: Math.round(state.y), realm: `${session.character.region} ${session.character.server}` };
+    if (saved && ['map', 'x', 'y', 'realm'].every(key => saved[key] === stand[key]) && now - Date.parse(saved.seenAt) < STAND_REFRESH) return;
+    await this.store.update(next => { if (next.characters.some(c => c.id === session.id)) next.stands[session.id] = { ...stand, seenAt: new Date(now).toISOString() }; });
   }
   // One reading per realm, from the first running character there, so two clients cannot disagree about one boss.
   updateServers() {

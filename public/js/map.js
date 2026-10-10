@@ -12,10 +12,16 @@ const canvas = $('map-canvas'), frame = $('map-frame'), ctx = canvas.getContext(
 const layer = document.createElement('canvas'), layerCtx = layer.getContext('2d');
 let width = 0, height = 0, dpr = 1, drawRequest = 0;
 // What the last sync put on the map, and the clickable or hoverable spots of the last frame in screen pixels.
-let scene = { own: [], nearby: [], saved: [] }, hits = [], doorHits = [];
+let scene = { own: [], nearby: [], saved: [], stands: [] }, hits = [], doorHits = [];
 const FONT = 'Inter, "Segoe UI", Arial, sans-serif';
-const COLORS = { background: '#070b0a', floor: '#0e1714', wall: '#5c7a66', text: '#c9d8cf', zoneFill: '#f6a29712', zoneLine: '#f6a29755', zoneText: '#e8a99f', door: '#8fc3f5', doorFill: '#8fc3f533', npc: '#ead390', npcText: '#e9dcae', monster: '#f06b5b', targeting: '#ff3d2e', player: '#8fc3f5', saved: '#9cb1a5', debuff: '#ff5a47', buff: '#bcf878', danger: '#f6a297' };
+const COLORS = { background: '#070b0a', floor: '#0e1714', wall: '#5c7a66', text: '#c9d8cf', zoneFill: '#f6a29712', zoneLine: '#f6a29755', zoneText: '#e8a99f', door: '#8fc3f5', doorFill: '#8fc3f533', npc: '#ead390', npcText: '#e9dcae', monster: '#f06b5b', targeting: '#ff3d2e', player: '#8fc3f5', saved: '#9cb1a5', debuff: '#ff5a47', buff: '#bcf878', danger: '#f6a297', stand: '#f5c56b' };
 const mapTitle = name => view.list?.find(m => m.name === name)?.title || name;
+const seenTime = iso => new Date(iso).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+// Saved stands of characters not running now; a running character shows its stand live.
+function savedStands() {
+  const running = new Set(runningSessions().map(s => s.id));
+  return Object.entries(app.dashboard?.stands || {}).filter(([id]) => !running.has(id)).map(([id, stand]) => ({ id, name: characterName(id), ...stand }));
+}
 
 function currentMapName() {
   const followed = runningSessions().find(s => s.id === view.follow);
@@ -149,7 +155,7 @@ function sync() {
   renderControls(name); setText($('map-name'), mapTitle(name));
   const map = view.cache.get(name);
   if (!map || map.error) {
-    scene = { own: [], nearby: [], saved: [] }; markers.clear();
+    scene = { own: [], nearby: [], saved: [], stands: [] }; markers.clear();
     setText($('map-status'), map?.error || view.listError || 'Načítám mapu…');
     if (!map) fetchMap(name);
     scheduleSide(); requestDraw(); return;
@@ -174,12 +180,13 @@ function sync() {
     const effects = s.state.conditions || [], debuffs = effects.filter(e => e.kind === 'debuff'), buffs = effects.filter(e => e.kind === 'buff');
     const target = s.state.target && (s.state.nearby || []).find(e => e.kind === 'monster' && e.target);
     const key = `o:${s.id}`; addSample(key, s.state.at ?? Date.now(), s.state.x, s.state.y);
-    return { id: s.id, key, name: s.state.name, x: s.state.x, y: s.state.y, color: classColors[s.state.ctype] || '#bcf878', dead: !!s.state.rip, ring: debuffs.length ? 'debuff' : buffs.length ? 'buff' : '', target: target ? `e:${target.id || `${target.kind}:${target.name}:${target.x}:${target.y}`}` : null, tip: [s.state.name, ...effects.map(e => `${e.kind === 'debuff' ? '▼' : e.kind === 'buff' ? '▲' : '•'} ${e.name}`)].join('\n') };
+    return { id: s.id, key, name: s.state.name, x: s.state.x, y: s.state.y, color: classColors[s.state.ctype] || '#bcf878', dead: !!s.state.rip, stand: !!s.state.stand, ring: debuffs.length ? 'debuff' : buffs.length ? 'buff' : '', target: target ? `e:${target.id || `${target.kind}:${target.name}:${target.x}:${target.y}`}` : null, tip: [s.state.name, ...(s.state.stand ? ['Stánek otevřený'] : []), ...effects.map(e => `${e.kind === 'debuff' ? '▼' : e.kind === 'buff' ? '▲' : '•'} ${e.name}`)].join('\n') };
   });
   for (const key of markers.keys()) if (key.startsWith('o:') && !own.some(o => o.key === key)) markers.delete(key);
   const saved = app.owned.filter(c => c.map === name && Number.isFinite(c.x) && !running.some(s => s.state.name?.toLowerCase() === c.name.toLowerCase())).map(c => ({ name: c.name, x: c.x, y: c.y }));
-  scene = { own, nearby: [...entities.values()], saved };
-  setText($('map-status'), running.length ? `${running.length} ${running.length === 1 ? 'postava' : 'postavy'} na této mapě · ${app.liveConnected ? 'živě přes WebSocket' : 'obnova každých 5 s (živé spojení se obnovuje)'}` : saved.length ? 'Na této mapě neběží žádná postava; zobrazeny jsou uložené pozice.' : 'Na této mapě teď nikdo není.');
+  const stands = savedStands().filter(stand => stand.map === name);
+  scene = { own, nearby: [...entities.values()], saved, stands };
+  setText($('map-status'), running.length ? `${running.length} ${running.length === 1 ? 'postava' : 'postavy'} na této mapě · ${app.liveConnected ? 'živě přes WebSocket' : 'obnova každých 5 s (živé spojení se obnovuje)'}` : saved.length || stands.length ? 'Na této mapě neběží žádná postava; zobrazeny jsou uložené pozice.' : 'Na této mapě teď nikdo není.');
   scheduleSide(); requestDraw();
 }
 
@@ -232,6 +239,10 @@ function circle(x, y, r, fill, stroke, lineWidth = 1, dash = null) {
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
   if (stroke) { ctx.setLineDash(dash || []); ctx.lineWidth = lineWidth; ctx.strokeStyle = stroke; ctx.stroke(); ctx.setLineDash([]); }
 }
+function square(x, y, half, fill, stroke, lineWidth = 1, dash = null) {
+  if (fill) { ctx.fillStyle = fill; ctx.fillRect(x - half, y - half, half * 2, half * 2); }
+  if (stroke) { ctx.setLineDash(dash || []); ctx.lineWidth = lineWidth; ctx.strokeStyle = stroke; ctx.strokeRect(x - half, y - half, half * 2, half * 2); ctx.setLineDash([]); }
+}
 function draw(time) {
   drawRequest = 0;
   // A small tolerance keeps every second frame of a 60 Hz display instead of drifting to every third.
@@ -257,8 +268,10 @@ function draw(time) {
     const [x, y] = at(key);
     if (!visible(x, y)) continue;
     const monster = entity.kind === 'monster';
-    circle(x, y, monster ? 3.5 : 4, monster ? (entity.target ? COLORS.targeting : COLORS.monster) : COLORS.player, entity.target && monster ? '#fff' : null);
-    hits.push({ type: 'entity', x: x - 6, y: y - 6, w: 12, h: 12, tip: `${entity.name}${entity.target ? ' · útočí na postavu' : ''}` });
+    // Another player's open stand is a square in the stand colour.
+    if (entity.stand) square(x, y, 4.5, COLORS.stand, COLORS.background);
+    else circle(x, y, monster ? 3.5 : 4, monster ? (entity.target ? COLORS.targeting : COLORS.monster) : COLORS.player, entity.target && monster ? '#fff' : null);
+    hits.push({ type: 'entity', x: x - 6, y: y - 6, w: 12, h: 12, tip: `${entity.name}${entity.stand ? ' · stánek' : ''}${entity.target ? ' · útočí na postavu' : ''}` });
   }
   for (const c of scene.saved) {
     const x = ox + c.x * s, y = oy + c.y * s;
@@ -266,6 +279,14 @@ function draw(time) {
     circle(x, y, 6, null, COLORS.saved, 2, [3, 2]);
     label(ctx, `${c.name} (uloženo)`, x, y - 10, COLORS.saved);
     hits.push({ type: 'saved', x: x - 8, y: y - 8, w: 16, h: 16, tip: `${c.name} · poslední uložená pozice` });
+  }
+  // The label goes below, so it does not cover the character's own saved position at the same spot.
+  for (const stand of scene.stands) {
+    const x = ox + stand.x * s, y = oy + stand.y * s;
+    if (!visible(x, y)) continue;
+    square(x, y, 9, `${COLORS.stand}22`, COLORS.stand, 2, [3, 2]);
+    label(ctx, `${stand.name} · stánek`, x, y + 22, COLORS.stand);
+    hits.push({ type: 'stand', x: x - 10, y: y - 10, w: 20, h: 20, tip: `${stand.name} · stánek\nNaposledy viděn otevřený ${seenTime(stand.seenAt)} (${stand.realm})\nPostava neběží v panelu; po jejím odpojení ze hry stánek zmizí.` });
   }
   for (const o of scene.own) {
     const [x, y] = at(o.key);
@@ -275,9 +296,11 @@ function draw(time) {
     }
     // A coloured ring shows active effects: red for any debuff, green for buffs only.
     if (o.ring) circle(x, y, 12, null, o.ring === 'debuff' ? COLORS.debuff : COLORS.buff, 2.5, o.ring === 'debuff' ? [5, 3] : null);
+    // An open stand frames the character in a square.
+    if (o.stand) square(x, y, 15, `${COLORS.stand}22`, COLORS.stand, 2);
     const isFollowed = o.id === view.follow;
     circle(x, y, 7, o.dead ? '#555' : o.color, o.dead ? COLORS.danger : isFollowed ? '#fff' : COLORS.background, isFollowed ? 3 : 2);
-    label(ctx, `${o.name}${o.dead ? ' ✝' : ''}`, x, y - 12, o.color, { size: 12.5, bold: true });
+    label(ctx, `${o.name}${o.dead ? ' ✝' : ''}${o.stand ? ' · stánek' : ''}`, x, y - (o.stand ? 19 : 12), o.color, { size: 12.5, bold: true });
     hits.push({ type: 'own', id: o.id, x: x - 10, y: y - 10, w: 20, h: 20, tip: o.tip });
   }
   // Read by the browser test to find markers and doors on the canvas.
@@ -322,18 +345,21 @@ function scheduleSide() {
 function renderSide() {
   if (!app.dashboard) return;
   const running = runningSessions(), name = currentMapName();
-  const rows = running.map(s => `<button class="map-character ${s.id === view.follow ? 'active' : ''}" data-follow="${s.id}"><i style="background:${classColors[s.state.ctype] || '#bcf878'}"></i><span><strong>${escape(s.state.name)}</strong><small>${escape(mapTitle(s.state.map))} · ${number(s.state.x)}, ${number(s.state.y)}${s.state.target ? ` · cíl ${escape(s.state.target)}` : ''}</small>${(s.state.conditions || []).filter(e => e.kind !== 'neutral').length ? `<small class="map-effects">${s.state.conditions.filter(e => e.kind !== 'neutral').map(e => `<b class="${e.kind}">${escape(e.name)}</b>`).join(' ')}</small>` : ''}</span><em>živě</em></button>`);
+  const rows = running.map(s => `<button class="map-character ${s.id === view.follow ? 'active' : ''}" data-follow="${s.id}"><i style="background:${classColors[s.state.ctype] || '#bcf878'}"></i><span><strong>${escape(s.state.name)}</strong><small>${escape(mapTitle(s.state.map))} · ${number(s.state.x)}, ${number(s.state.y)}${s.state.stand ? ' · stánek otevřený' : ''}${s.state.target ? ` · cíl ${escape(s.state.target)}` : ''}</small>${(s.state.conditions || []).filter(e => e.kind !== 'neutral').length ? `<small class="map-effects">${s.state.conditions.filter(e => e.kind !== 'neutral').map(e => `<b class="${e.kind}">${escape(e.name)}</b>`).join(' ')}</small>` : ''}</span><em>živě</em></button>`);
   const runningNames = new Set(running.map(s => s.state.name?.toLowerCase()));
   for (const c of app.owned.filter(c => c.map && !runningNames.has(c.name.toLowerCase()))) {
     rows.push(`<button class="map-character saved" data-map="${escape(c.map)}"><i></i><span><strong>${escape(c.name)}</strong><small>${escape(mapTitle(c.map))} · ${number(c.x)}, ${number(c.y)}${c.online ? ' · online jinde' : ''}</small></span><em>uloženo</em></button>`);
+  }
+  for (const stand of savedStands()) {
+    rows.push(`<button class="map-character saved stand" data-map="${escape(stand.map)}"><i></i><span><strong>${escape(stand.name)} · stánek</strong><small>${escape(mapTitle(stand.map))} · ${number(stand.x)}, ${number(stand.y)} · ${escape(stand.realm)} · viděn ${escape(seenTime(stand.seenAt))}</small></span><em>stánek</em></button>`);
   }
   setHtml($('map-characters'), rows.length ? rows.join('') : `<p class="fine">Žádná postava neběží.${app.dashboard.gameApi?.configured ? '' : ' S API tokenem uvidíš i uložené pozice ostatních postav účtu.'}</p>`);
   const followed = running.find(s => s.id === view.follow);
   if (!followed) setHtml($('map-nearby'), '<p class="fine">Vyber v poli Kamera postavu, kterou chceš sledovat.</p>');
   else {
     const counts = new Map();
-    for (const e of followed.state.nearby || []) { const key = `${e.kind}:${e.name}`; counts.set(key, { ...e, count: (counts.get(key)?.count || 0) + 1, target: counts.get(key)?.target || e.target }); }
-    setHtml($('map-nearby'), counts.size ? [...counts.values()].map(e => `<div class="nearby-row"><span class="nearby-kind ${e.kind}"></span><span>${escape(e.name)}</span><small>${e.target ? 'útočí na postavu · ' : ''}×${e.count}</small></div>`).join('') : '<p class="fine">V okolí nikdo není.</p>');
+    for (const e of followed.state.nearby || []) { const key = `${e.kind}:${e.name}`; counts.set(key, { ...e, count: (counts.get(key)?.count || 0) + 1, target: counts.get(key)?.target || e.target, stand: counts.get(key)?.stand || e.stand }); }
+    setHtml($('map-nearby'), counts.size ? [...counts.values()].map(e => `<div class="nearby-row"><span class="nearby-kind ${e.kind}${e.stand ? ' stand' : ''}"></span><span>${escape(e.name)}</span><small>${e.stand ? 'stánek · ' : ''}${e.target ? 'útočí na postavu · ' : ''}×${e.count}</small></div>`).join('') : '<p class="fine">V okolí nikdo není.</p>');
   }
   const map = view.cache.get(name);
   setHtml($('map-doors'), !map ? '<p class="fine">Načítám…</p>' : map.doors?.length ? [...new Map(map.doors.map(d => [d.to, d])).values()].map(d => `<button class="ghost small-button" data-door="${escape(d.to)}">→ ${escape(d.title)}</button>`).join('') : '<p class="fine">Žádné průchody.</p>');

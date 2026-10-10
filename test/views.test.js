@@ -484,13 +484,45 @@ test('remembered Automation values are set again once the CODE offers them after
 test('game state is sanitized before it reaches the panel', () => {
   const state = sanitizeState(JSON.stringify({ name: 'A'.repeat(100), level: 5, x: 1.5, y: 'bad', nearby: [{ kind: 'boss', name: 'goo', x: 1.4, y: 2, target: 1, extra: 'x' }, { x: 'nope' }], secret: 'x' }));
   assert.equal(state.name.length, 32); assert.equal(state.x, 1.5); assert.equal(state.y, 0);
-  assert.deepEqual(state.nearby, [{ id: '', kind: 'character', name: 'goo', x: 1, y: 2, target: true }]);
+  assert.deepEqual(state.nearby, [{ id: '', kind: 'character', name: 'goo', x: 1, y: 2, target: true, stand: false }]);
+  assert.equal(state.stand, false);
+  const merchant = sanitizeState({ stand: 'stand0', nearby: [{ kind: 'character', name: 'Seller', x: 0, y: 0, stand: 'stand0' }, { kind: 'monster', name: 'goo', x: 0, y: 0, stand: true }] });
+  assert.equal(merchant.stand, true);
+  assert.deepEqual(merchant.nearby.map(e => e.stand), [true, false], 'only players have stands');
   assert.ok(Math.abs(state.at - Date.now()) < 1000, 'a missing sampling time falls back to now');
   const sampled = Date.now() - 500, withTime = sanitizeState({ at: sampled, nearby: [{ id: 'm42', x: 0, y: 0 }] });
   assert.equal(withTime.at, sampled); assert.equal(withTime.nearby[0].id, 'm42');
   assert.ok(sanitizeState({ at: 5 }).at > 5, 'an implausible sampling time is replaced');
   assert.equal('secret' in state, false);
   assert.equal(sanitizeState('{broken'), null); assert.equal(sanitizeState('x'.repeat(70_000)), null);
+});
+test('an open stand is remembered for the map until it is seen closed', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'al-stand-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = configFromEnv({ ADMIN_PASSWORD: 'fixture-password-long-enough', DATA_DIR: directory });
+  const store = new Store(directory); await store.init();
+  await store.update(state => { state.characters.push({ id: 'b4f6c1d2-0000-4000-8000-000000000001', name: 'Seller', region: 'EU', server: 'I', scriptId: null, autoStart: false, idleMinutes: 10, autoReloadIdle: false, potionMin: 10 }); });
+  const runtime = new Runtime(config, store);
+  const id = store.state.characters[0].id;
+  const session = { id, character: store.state.characters[0], state: { map: 'main', x: 10.4, y: -20.6, stand: false } };
+  await runtime.rememberStand(session);
+  assert.deepEqual(store.state.stands, {}, 'a closed stand is not saved');
+  session.state = { ...session.state, stand: true };
+  await runtime.rememberStand(session);
+  const saved = store.state.stands[id];
+  assert.deepEqual({ ...saved, seenAt: undefined }, { map: 'main', x: 10, y: -21, realm: 'EU I', seenAt: undefined });
+  await runtime.rememberStand(session);
+  assert.equal(store.state.stands[id].seenAt, saved.seenAt, 'an unchanged stand is not saved again right away');
+  session.state = { ...session.state, x: 50 };
+  await runtime.rememberStand(session);
+  assert.equal(store.state.stands[id].x, 50);
+  // The saved stand survives a restart and is forgotten once the character is seen without it.
+  const reloaded = new Store(directory); await reloaded.init();
+  assert.equal(reloaded.state.stands[id].x, 50);
+  session.state = { ...session.state, stand: false };
+  await runtime.rememberStand(session);
+  assert.deepEqual(store.state.stands, {});
+  await runtime.close();
 });
 test('live WebSocket requires panel session and Origin, pushes state and logs and closes on logout', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-live-'));

@@ -233,7 +233,7 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .map-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--muted)}
 .map-legend span{display:flex;align-items:center;gap:6px}
 .legend{display:inline-block;width:10px;height:10px;border-radius:50%}
-.legend.own{background:var(--accent)}.legend.saved{border:2px dashed #9cb1a5}.legend.monster{background:#f06b5b}.legend.player{background:var(--info)}.legend.npc{background:var(--warn)}.legend.door{background:#8fc3f566;border:1px solid var(--info);border-radius:2px}.legend.effect-debuff{border:2px dashed #ff5a47}.legend.effect-buff{border:2px solid var(--accent)}
+.legend.own{background:var(--accent)}.legend.saved{border:2px dashed #9cb1a5}.legend.monster{background:#f06b5b}.legend.player{background:var(--info)}.legend.npc{background:var(--warn)}.legend.door{background:#8fc3f566;border:1px solid var(--info);border-radius:2px}.legend.effect-debuff{border:2px dashed #ff5a47}.legend.effect-buff{border:2px solid var(--accent)}.legend.stand{border-radius:2px;background:#f5c56b33;border:2px solid #f5c56b}
 .map-side{display:grid;gap:10px}
 .map-side-title{margin-top:10px}
 .map-characters,.map-nearby{display:grid;gap:6px}
@@ -241,6 +241,7 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .map-character.active{border-color:var(--accent);background:var(--accent-soft)}
 .map-character i{width:10px;height:10px;border-radius:50%;flex:none}
 .map-character.saved i{border:2px dashed #9cb1a5}
+.map-character.stand i{border-radius:2px;border-color:#f5c56b}
 .map-character span{flex:1;min-width:0}
 .map-character strong{display:block;font-size:13px}
 .map-character small{display:block;color:var(--faint);font-size:11px;overflow-wrap:anywhere}
@@ -250,6 +251,7 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .nearby-row small{margin-left:auto;color:var(--faint);font-size:11px}
 .nearby-kind{width:8px;height:8px;border-radius:50%;background:var(--info);flex:none}
 .nearby-kind.monster{background:#f06b5b}
+.nearby-kind.stand{border-radius:2px;background:#f5c56b}
 
 /* Inventory */
 .inventory-tools{min-width:min(280px,100%)}
