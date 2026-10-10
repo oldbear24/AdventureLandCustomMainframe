@@ -88,7 +88,8 @@ jobs:
           trap 'docker logs mainframe-smoke; docker rm --force mainframe-smoke; rm -f "$cert"' EXIT
           ready=false
           for attempt in $(seq 1 30); do
-            if docker exec mainframe-smoke cat /app/data/tls/cert.pem > "$cert" 2>/dev/null               && curl --fail --silent --cacert "$cert" https://localhost:3000/healthz; then
+            if docker exec mainframe-smoke cat /app/data/tls/cert.pem > "$cert" 2>/dev/null \
+              && curl --fail --silent --cacert "$cert" https://localhost:3000/healthz; then
               ready=true
               break
             fi
@@ -133,7 +134,6 @@ jobs:
             --mount "type=bind,source=$certs,target=/app/certs,readonly" \
             --env ADMIN_USERNAME=tls-operator \
             --env ADMIN_PASSWORD=ci-smoke-test-password-only \
-\
             --env TLS_CERT_FILE=/app/certs/fullchain.pem \
             --env TLS_KEY_FILE=/app/certs/privkey.pem \
             --env PUBLIC_ORIGIN=https://localhost:3443 \

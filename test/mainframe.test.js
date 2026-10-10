@@ -151,7 +151,7 @@ test('the actual Node 22 startup command generates a certificate and serves the 
     child.on('error', reject); child.on('exit', code => reject(new Error(`Startup exited ${code}: ${text}`)));
   }), 10_000);
   assert.match(output, /Adventure Land Mainframe/);
-  assert.match(output, new RegExp(`https://127\.0\.0\.1:${port}`));
+  assert.ok(output.includes(`https://127.0.0.1:${port}`));
   const ca = await readFile(path.join(directory, 'tls', 'cert.pem'));
   const get = (endpoint, options = {}) => new Promise((resolve, reject) => {
     https.get(`https://127.0.0.1:${port}${endpoint}`, { ca, ...options }, response => {
