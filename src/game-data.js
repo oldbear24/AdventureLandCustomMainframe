@@ -3,7 +3,11 @@ import { GAME_ORIGIN } from './runtime.js';
 const failure = (status, message) => Object.assign(new Error(message), { status });
 export const MAP_NAME = /^[a-zA-Z0-9_]{1,40}$/;
 const ITEM_NAME = /^[a-zA-Z0-9_]{1,64}$/;
+const SHEET = /^[a-zA-Z0-9_]{1,40}$/;
+const SHEET_FILE = /^\/images\/[a-zA-Z0-9_/.-]{1,160}\.png(\?v=[a-zA-Z0-9]{1,16})?$/;
 const MAX_SIZE = 30 * 1024 * 1024;
+const MAX_SHEET_SIZE = 5 * 1024 * 1024;
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const REFRESH = 6 * 60 * 60 * 1000;
 const finite = value => Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
 const text = (value, fallback) => typeof value === 'string' && value.length <= 80 ? value : fallback;
@@ -34,10 +38,30 @@ function compactMap(G, name) {
   };
 }
 
+// Item icon sheets (imagesets) are grids of square tiles; only well-formed local PNG paths are kept.
+function iconSheets(G) {
+  const sheets = {};
+  for (const [key, set] of Object.entries(G.imagesets || {})) {
+    const size = finite(set?.size), columns = finite(set?.columns), rows = finite(set?.rows);
+    if (!SHEET.test(key) || typeof set.file !== 'string' || !SHEET_FILE.test(set.file) || set.file.includes('..')) continue;
+    if (size > 0 && size <= 64 && columns > 0 && columns <= 256 && rows > 0 && rows <= 512) sheets[key] = { file: set.file, size, columns, rows };
+  }
+  return sheets;
+}
+// G.positions maps an item (or its skin) to [sheet, column, row]; an empty sheet name means the default pack_20.
+function iconOf(G, sheets, key, item) {
+  const position = G.positions?.[typeof item?.skin === 'string' ? item.skin : key];
+  if (!Array.isArray(position) || position.length !== 3 || typeof position[0] !== 'string') return null;
+  const sheet = position[0] || 'pack_20', set = Object.hasOwn(sheets, sheet) ? sheets[sheet] : null;
+  const column = finite(position[1]), row = finite(position[2]);
+  if (!set || column === null || row === null || column < 0 || row < 0 || column >= set.columns || row >= set.rows) return null;
+  return { sheet, x: column * set.size, y: row * set.size, size: set.size, width: set.columns * set.size, height: set.rows * set.size };
+}
+
 // Public game definitions (data.js) give map geometry and item names without any running character.
 export class GameData {
   constructor(request = fetch) {
-    this.request = request; this.data = null; this.loadedAt = 0; this.loading = null; this.maps = new Map();
+    this.request = request; this.data = null; this.loadedAt = 0; this.loading = null; this.maps = new Map(); this.sheets = new Map();
   }
   async fetchData() {
     let body;
@@ -51,11 +75,11 @@ export class GameData {
     try { G = JSON.parse(body.slice(body.indexOf('{'), body.lastIndexOf('}') + 1)); }
     catch { throw failure(502, 'Herní data mají neočekávaný formát.'); }
     if (!G?.maps || !G?.geometry || !G?.items) throw failure(502, 'Herní data mají neočekávaný formát.');
-    const items = {};
-    for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { name: text(item?.name, key), type: text(item?.type, '') };
+    const sheets = iconSheets(G), items = {};
+    for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { name: text(item?.name, key), type: text(item?.type, ''), icon: iconOf(G, sheets, key, item) };
     const maps = Object.entries(G.maps).filter(([name, map]) => MAP_NAME.test(name) && map && !map.ignore && (G.geometry[map.key] || G.geometry[name]))
       .map(([name, map]) => ({ name, title: text(map.name, name) })).sort((a, b) => a.title.localeCompare(b.title));
-    return { G, items, maps, version: finite(G.version) };
+    return { G, items, maps, sheets, version: finite(G.version) };
   }
   // Refreshes at most every 6 hours; a failed refresh keeps serving the previous copy.
   async load() {
@@ -76,6 +100,28 @@ export class GameData {
       this.maps.set(name, map);
     }
     return this.maps.get(name);
+  }
+  // Icon sheets are fetched once per file version and kept in memory; a failed download is retried on the next request.
+  async sheet(name) {
+    if (!SHEET.test(name)) throw failure(400, 'Neplatný název obrázků.');
+    const data = await this.load();
+    const set = Object.hasOwn(data.sheets, name) ? data.sheets[name] : null;
+    if (!set) throw failure(404, 'Obrázky předmětů neexistují.');
+    const cached = this.sheets.get(name);
+    if (cached?.file === set.file) return cached.body;
+    const body = this.fetchSheet(set.file).catch(error => { if (this.sheets.get(name)?.body === body) this.sheets.delete(name); throw error; });
+    this.sheets.set(name, { file: set.file, body });
+    return body;
+  }
+  async fetchSheet(file) {
+    let body;
+    try {
+      const response = await this.request(new URL(file, GAME_ORIGIN).href, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) throw new Error(String(response.status));
+      body = Buffer.from(await response.arrayBuffer());
+    } catch { throw failure(502, 'Obrázky předmětů se nepodařilo stáhnout z Adventure Land.'); }
+    if (body.length > MAX_SHEET_SIZE || !body.subarray(0, 8).equals(PNG)) throw failure(502, 'Obrázky předmětů mají neočekávaný formát.');
+    return body;
   }
   // Display names are optional: an unreachable data.js must not hide an inventory.
   async itemNames() {

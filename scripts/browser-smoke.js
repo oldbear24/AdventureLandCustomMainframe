@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import { crc32, deflateSync } from 'node:zlib';
 import { chromium } from 'playwright';
 import { Store } from '../src/store.js';
 import { Runtime, GAME_ORIGIN } from '../src/runtime.js';
@@ -73,10 +74,21 @@ const gameApi = new GameApi(config, async (url, options) => {
   throw new Error(`Unexpected API method ${method}`);
 }); await gameApi.init();
 runtime.gameApi = gameApi;
+// A 40×40 RGB sheet of 2×2 solid tiles stands in for the game's item icons.
+function iconSheet() {
+  const chunk = (type, data) => { const head = Buffer.alloc(8), tail = Buffer.alloc(4); head.writeUInt32BE(data.length); head.write(type, 4); tail.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data]))); return Buffer.concat([head, data, tail]); };
+  const header = Buffer.alloc(13); header.writeUInt32BE(40, 0); header.writeUInt32BE(40, 4); header[8] = 8; header[9] = 2;
+  const rows = []; for (let y = 0; y < 40; y++) { rows.push(0); for (let x = 0; x < 40; x++) rows.push(x < 20 ? 200 : 40, y < 20 ? 60 : 180, 90); }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0))]);
+}
 const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
+  imagesets: { pack_20: { size: 20, rows: 2, columns: 2, file: '/images/tiles/items/pack_20vt8.png' } }, positions: { hpot0: ['', 1, 0] },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
   geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
-const gameData = new GameData(async url => { assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`); });
+const gameData = new GameData(async url => {
+  if (url === `${GAME_ORIGIN}/images/tiles/items/pack_20vt8.png`) return new Response(iconSheet());
+  assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`);
+});
 const app = createApp(config, store, runtime, account, gameApi, gameData);
 const server = await createWebServer(config, app); server.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `https://127.0.0.1:${server.address().port}`;
@@ -215,6 +227,10 @@ try {
   await page.waitForFunction(() => document.querySelector('#inventory-detail').textContent.includes('Health Potion'));
   assert.match(await page.locator('#inventory-detail').textContent(), /Živě/);
   assert.match(await page.locator('#inventory-detail').textContent(), /Short Sword/);
+  // Health Potion has a game icon, Short Sword falls back to a placeholder; the sheet loads under the panel CSP.
+  assert.equal(await page.locator('#inventory-detail .item-icon:not(.missing)').count(), 1);
+  assert.match(await page.locator('#inventory-detail .item-icon:not(.missing)').getAttribute('style'), /item-sheets\/pack_20.*background-position:-32px 0px/);
+  assert.equal(await page.evaluate(() => new Promise(resolve => { const image = new Image(); image.onload = () => resolve(image.naturalWidth); image.onerror = () => resolve(0); image.src = '/api/item-sheets/pack_20'; })), 40);
   await page.locator('#inventory-filter').fill('potion');
   assert.equal(await page.locator('#inventory-detail .item-tile:not(.dimmed):not(.empty-slot)').count(), 1);
   await page.locator('#inventory-filter').fill('');

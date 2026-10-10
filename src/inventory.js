@@ -8,9 +8,9 @@ const SLOT_ORDER = ['helmet', 'chest', 'pants', 'shoes', 'gloves', 'cape', 'main
 // Only whitelisted fields leave the server; game items can carry arbitrary nested data.
 export function itemView(item, names = {}) {
   if (!item || typeof item !== 'object' || typeof item.name !== 'string' || !ITEM_NAME.test(item.name) || item.name === 'placeholder') return null;
-  const level = count(item.level, 0);
+  const level = count(item.level, 0), known = Object.hasOwn(names, item.name) ? names[item.name] : null;
   return {
-    name: item.name, title: Object.hasOwn(names, item.name) ? names[item.name].name : item.name,
+    name: item.name, title: known ? known.name : item.name, icon: known?.icon || null,
     level, quantity: count(item.q, 1) || 1,
     locked: !!(item.l || item.b), special: typeof item.p === 'string' && /^[a-z0-9_]{1,24}$/i.test(item.p) ? item.p : null,
     stat: typeof item.stat_type === 'string' && /^[a-z0-9_]{1,24}$/i.test(item.stat_type) ? item.stat_type : null,

@@ -743,11 +743,18 @@ async function loadInventory(quiet = false) {
     if (target === inventoryTarget && !quiet) { inventoryData = null; $('inventory-detail').innerHTML = `<div class="section-head"><h2>${escape(target === BANK ? 'Banka účtu' : target)}</h2><button class="ghost small-button" data-inventory-reload>↻ Obnovit</button></div><p class="error">${escape(error.message)}</p>`; }
   } finally { inventoryLoading = false; }
 }
+// Game icons are tiles of a sprite sheet proxied by the panel; scaled to 32 px with crisp pixels.
+const ICON_SIZE = 32;
+function itemIcon(icon) {
+  if (!icon) return '<span class="item-icon missing" aria-hidden="true"></span>';
+  const scale = ICON_SIZE / icon.size, px = value => `${Math.round(value * scale)}px`;
+  return `<span class="item-icon" aria-hidden="true" style="background-image:url('/api/item-sheets/${encodeURIComponent(icon.sheet)}');background-position:${px(-icon.x)} ${px(-icon.y)};background-size:${px(icon.width)} ${px(icon.height)}"></span>`;
+}
 function itemTile(item, label = '') {
   if (!item) return `<div class="item-tile empty-slot">${label ? `<span class="slot-name">${escape(label)}</span>` : ''}</div>`;
   const search = `${item.title} ${item.name}`.toLowerCase();
   const tooltip = `${item.title}${item.level !== null ? ` +${item.level}` : ''}${item.quantity > 1 ? ` · ${number(item.quantity)} ks` : ''}${item.special ? ` · ${item.special}` : ''}${item.stat ? ` · ${item.stat}` : ''}${item.locked ? ' · zamčeno' : ''}`;
-  return `<div class="item-tile" data-search="${escape(search)}" title="${escape(tooltip)}">${label ? `<span class="slot-name">${escape(label)}</span>` : ''}<strong>${escape(item.title)}</strong><span class="item-meta">${item.level !== null ? `<b>+${item.level}</b>` : ''}${item.quantity > 1 ? `<span>×${number(item.quantity)}</span>` : ''}${item.special ? `<em>${escape(item.special)}</em>` : ''}${item.locked ? '<span aria-label="zamčeno">🔒</span>' : ''}</span></div>`;
+  return `<div class="item-tile" data-search="${escape(search)}" title="${escape(tooltip)}">${label ? `<span class="slot-name">${escape(label)}</span>` : ''}${itemIcon(item.icon)}<strong>${escape(item.title)}</strong><span class="item-meta">${item.level !== null ? `<b>+${item.level}</b>` : ''}${item.quantity > 1 ? `<span>×${number(item.quantity)}</span>` : ''}${item.special ? `<em>${escape(item.special)}</em>` : ''}${item.locked ? '<span aria-label="zamčeno">🔒</span>' : ''}</span></div>`;
 }
 const slotNames = { helmet: 'Helma', chest: 'Hruď', pants: 'Kalhoty', shoes: 'Boty', gloves: 'Rukavice', cape: 'Plášť', mainhand: 'Hlavní ruka', offhand: 'Druhá ruka', amulet: 'Amulet', earring1: 'Náušnice 1', earring2: 'Náušnice 2', ring1: 'Prsten 1', ring2: 'Prsten 2', belt: 'Opasek', orb: 'Orb', elixir: 'Elixír' };
 function renderInventory() {

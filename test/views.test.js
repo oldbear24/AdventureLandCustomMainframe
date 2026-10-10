@@ -22,9 +22,13 @@ const G = {
   },
   geometry: { main: { min_x: -100, max_x: 200, min_y: -80, max_y: 120, x_lines: [[0, -10, 10], ['bad']], y_lines: [[5, -20, 20]] }, bank: { min_x: 0, max_x: 10, min_y: 0, max_y: 10, x_lines: [], y_lines: [] } },
   npcs: { fancypots: { name: 'Ernis' } }, monsters: { goo: { name: 'Goo' }, bee: { name: 'Bee' } },
-  items: { hpot0: { name: 'Health Potion', type: 'pot' }, ringsj: { name: 'Ring of Strength', type: 'ring' } },
+  items: { hpot0: { name: 'Health Potion', type: 'pot' }, ringsj: { name: 'Ring of Strength', type: 'ring', skin: 'ring' }, lost: { name: 'Lost' }, outside: { name: 'Outside' } },
+  imagesets: { pack_20: { size: 20, rows: 4, columns: 8, file: '/images/tiles/items/pack_20vt8.png' }, pack_1a: { size: 16, rows: 2, columns: 2, file: '/images/tiles/items/pack_1a.png?v=11' }, evil: { size: 20, rows: 1, columns: 1, file: 'https://example.com/x.png' }, sneaky: { size: 20, rows: 1, columns: 1, file: '/images/../secret.png' } },
+  positions: { hpot0: ['', 4, 2], ring: ['pack_1a', 1, 1], outside: ['', 8, 0] },
 };
 const dataJs = `var G=${JSON.stringify(G)};`;
+const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fixture image')]);
+const serve = (sheet = png) => async url => url.endsWith('/data.js') ? new Response(dataJs) : new Response(sheet);
 
 test('game data is reduced to drawable maps and item names', async () => {
   let fetches = 0;
@@ -39,15 +43,32 @@ test('game data is reduced to drawable maps and item names', async () => {
   assert.deepEqual(main.monsters.map(m => [m.name, m.box]), [['Goo', [-50, -50, 50, 50]], ['Bee', [0, 0, 10, 10]]]);
   await assert.rejects(data.map('../etc'), { status: 400 });
   await assert.rejects(data.map('hidden'), { status: 404 });
-  assert.equal((await data.itemNames()).hpot0.name, 'Health Potion');
+  const items = await data.itemNames();
+  assert.equal(items.hpot0.name, 'Health Potion');
+  assert.deepEqual(items.hpot0.icon, { sheet: 'pack_20', x: 80, y: 40, size: 20, width: 160, height: 80 });
+  assert.deepEqual(items.ringsj.icon, { sheet: 'pack_1a', x: 16, y: 16, size: 16, width: 32, height: 32 });
+  assert.equal(items.lost.icon, null); assert.equal(items.outside.icon, null);
   assert.equal(fetches, 1);
   const broken = new GameData(async () => new Response('not javascript'));
   await assert.rejects(broken.mapList(), { status: 502 });
   assert.deepEqual(await broken.itemNames(), {});
 });
+test('item icon sheets are fetched once from the game and must be PNG', async () => {
+  const urls = [];
+  const data = new GameData(async url => { urls.push(url); return serve()(url); });
+  assert.deepEqual(await data.sheet('pack_1a'), png);
+  assert.deepEqual(await data.sheet('pack_1a'), png);
+  assert.deepEqual(urls, ['https://adventure.land/data.js', 'https://adventure.land/images/tiles/items/pack_1a.png?v=11']);
+  await assert.rejects(data.sheet('evil'), { status: 404 });
+  await assert.rejects(data.sheet('sneaky'), { status: 404 });
+  await assert.rejects(data.sheet('../x'), { status: 400 });
+  const html = new GameData(serve(Buffer.from('<html>')));
+  await assert.rejects(html.sheet('pack_20'), { status: 502 });
+});
 test('items are whitelisted and named', () => {
-  const names = { hpot0: { name: 'Health Potion' } };
-  assert.deepEqual(itemView({ name: 'hpot0', q: 20, secret: 'x', l: 'l' }, names), { name: 'hpot0', title: 'Health Potion', level: null, quantity: 20, locked: true, special: null, stat: null });
+  const icon = { sheet: 'pack_20', x: 0, y: 0, size: 20, width: 20, height: 20 };
+  const names = { hpot0: { name: 'Health Potion', icon } };
+  assert.deepEqual(itemView({ name: 'hpot0', q: 20, secret: 'x', l: 'l' }, names), { name: 'hpot0', title: 'Health Potion', icon, level: null, quantity: 20, locked: true, special: null, stat: null });
   assert.equal(itemView({ name: '<img onerror=x>' }), null);
   assert.equal(itemView({ name: 'placeholder' }), null);
   assert.equal(itemView({ name: 'ringsj', level: 2, p: 'shiny' }).special, 'shiny');
@@ -61,7 +82,7 @@ async function fixture(t, upstream) {
   const store = new Store(directory); await store.init();
   const runtime = new Runtime(config, store);
   const gameApi = new GameApi(config, upstream); await gameApi.init();
-  const app = createApp(config, store, runtime, null, gameApi, new GameData(async () => new Response(dataJs)));
+  const app = createApp(config, store, runtime, null, gameApi, new GameData(serve()));
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const origin = `http://127.0.0.1:${server.address().port}`;
   let cookie = '';
@@ -72,7 +93,8 @@ async function fixture(t, upstream) {
   const result = await fetch(origin + '/api/login', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: config.password }) });
   cookie = result.headers.get('set-cookie').split(';')[0];
   t.after(async () => { app.locals.dispose(); await runtime.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
-  return { request, runtime, gameApi };
+  const image = async endpoint => fetch(origin + endpoint, { headers: { Cookie: cookie } });
+  return { request, image, runtime, gameApi };
 }
 test('saved inventories and bank come from the API token without leaking extra fields', async t => {
   const calls = [];
@@ -93,7 +115,7 @@ test('saved inventories and bank come from the API token without leaking extra f
   const inventory = await f.request('/api/inventories/Goldette');
   assert.equal(inventory.status, 200);
   assert.equal(inventory.data.source, 'saved'); assert.equal(inventory.data.size, 42); assert.equal(inventory.data.gold, 55800);
-  assert.deepEqual(inventory.data.items, [{ name: 'hpot0', title: 'Health Potion', level: null, quantity: 3, locked: false, special: null, stat: null }, null]);
+  assert.deepEqual(inventory.data.items, [{ name: 'hpot0', title: 'Health Potion', icon: { sheet: 'pack_20', x: 80, y: 40, size: 20, width: 160, height: 80 }, level: null, quantity: 3, locked: false, special: null, stat: null }, null]);
   assert.deepEqual(inventory.data.equipment.map(e => [e.slot, e.item.title, e.item.level]), [['ring1', 'Ring of Strength', 1]]);
   assert.equal(JSON.stringify(inventory.data).includes('hidden-field') || JSON.stringify(inventory.data).includes('private-auth'), false);
   assert.equal((await f.request('/api/inventories/Nobody')).status, 404);
@@ -105,6 +127,11 @@ test('saved inventories and bank come from the API token without leaking extra f
   assert.deepEqual(maps.data.maps.map(m => m.title), ['Mainland', 'The Bank']);
   assert.equal((await f.request('/api/maps/main')).data.title, 'Mainland');
   assert.equal((await f.request('/api/maps/nope')).status, 404);
+  const sheet = await f.image('/api/item-sheets/pack_20');
+  assert.equal(sheet.status, 200); assert.equal(sheet.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await sheet.arrayBuffer()), png);
+  assert.equal((await f.image('/api/item-sheets/evil')).status, 404);
+  assert.equal((await fetch(sheet.url)).status, 401);
 });
 test('a running character is read live, including the bank while inside it', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });

@@ -280,6 +280,8 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .item-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px}
 .item-tile{position:relative;min-height:70px;padding:7px 7px 6px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);display:flex;flex-direction:column;gap:3px;transition:opacity .15s}
 .item-tile strong{font-size:11px;font-weight:600;line-height:1.3;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.item-icon{display:block;width:32px;height:32px;flex:none;background-repeat:no-repeat;image-rendering:pixelated}
+.item-icon.missing{border-radius:5px;background:#1c2924}
 .item-tile .slot-name{font:9px Consolas,monospace;letter-spacing:.5px;color:var(--faint);text-transform:uppercase}
 .item-meta{margin-top:auto;display:flex;gap:5px;flex-wrap:wrap;font:11px Consolas,monospace;color:var(--muted)}
 .item-meta b{color:var(--accent);font-weight:600}
