@@ -115,7 +115,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -177,6 +177,20 @@ test('a running character is read live, including the bank while inside it', asy
   assert.equal(bank.data.source, 'live'); assert.equal(bank.data.via, 'Runner'); assert.equal(bank.data.gold, 1000);
   assert.equal(bank.data.packs[0].items[0].title, 'Ring of Strength');
   f.runtime.sessions.clear();
+});
+
+test('server events list realms and save which events notify', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  f.runtime.servers.set('EU I', { realm: 'EU I', via: 'Runner', observedAt: 1, events: [{ key: 'franky', live: true }], schedule: null });
+  const result = await f.request('/api/server-events');
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.realms.map(r => r.realm), ['EU I']);
+  assert.ok(result.data.catalog.some(e => e.key === 'franky' && e.kind === 'boss'));
+  assert.deepEqual(result.data.notifyEvents, []);
+  assert.deepEqual((await f.request('/api/settings/notify-events', 'PUT', { keys: ['icegolem', 'franky', 'franky'] })).data, { notifyEvents: ['franky', 'icegolem'] });
+  assert.deepEqual((await f.request('/api/server-events')).data.notifyEvents, ['franky', 'icegolem']);
+  assert.equal((await f.request('/api/settings/notify-events', 'PUT', { keys: ['<b>'] })).status, 400);
+  f.runtime.servers.clear();
 });
 
 test('values stored by CODE set() are listed live, pretty-printed and bounded', async t => {

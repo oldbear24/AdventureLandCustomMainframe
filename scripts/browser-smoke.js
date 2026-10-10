@@ -38,6 +38,7 @@ const browserType = {
           window.next_skill={attack:new Date(Date.now()+400),supershot:new Date(Date.now()+20000)};
           window.party={TestWarrior:{type:'warrior',level:42,map:'main',x:20,y:40},Healer:{type:'priest',level:40,map:'main',x:50,y:80}};
           window.entities={m1:{type:'monster',mtype:'goo',map:'main',x:60,y:40,target:'TestWarrior'},p1:{type:'character',name:'Stranger',map:'main',x:-30,y:10}};
+          window.S={franky:{live:true,hp:60000,max_hp:120000,map:'main',x:10,y:20,target:'TestWarrior'},icegolem:{live:false,spawn:new Date(Date.now()+3600000).toISOString()},halloween:true};
           window.socket={connected:true};window.code_run=false;window.code_active=false;
           window.add_log=()=>{};window.add_codelog=()=>{};
           window.stop_runner=()=>{document.querySelector('#maincode')?.remove();window.code_run=window.code_active=false};
@@ -82,7 +83,7 @@ function iconSheet() {
   const rows = []; for (let y = 0; y < 40; y++) { rows.push(0); for (let x = 0; x < 40; x++) rows.push(x < 20 ? 200 : 40, y < 20 ? 60 : 180, 90); }
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0))]);
 }
-const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
+const fixtureData = { version: 1, events: { franky: { name: 'Franky' }, halloween: { name: 'Halloween' } }, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' }, franky: { name: 'Franky' }, icegolem: { name: 'Ice Golem' } },
   imagesets: { pack_20: { size: 20, rows: 2, columns: 2, file: '/images/tiles/items/pack_20vt8.png' } }, positions: { hpot0: ['', 1, 0] },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
   geometry: { main: { min_x: -200, max_x: 200, min_y: -120, max_y: 160, x_lines: [[-200, -120, 160], [200, -120, 160]], y_lines: [[-120, -200, 200], [160, -200, 200]] }, bank: { min_x: -50, max_x: 50, min_y: -50, max_y: 50, x_lines: [], y_lines: [] } } };
@@ -249,6 +250,16 @@ try {
   assert.equal(await page.locator('#log-filter').inputValue(), store.snapshot().characters[0].id);
   await gamePage.evaluate(() => console.log('live log line'));
   await page.waitForFunction(() => document.querySelector('#logs').textContent.includes('live log line'), null, { timeout: 3000 });
+  // Events: the server's bosses and events as the running character's game client sees them.
+  await page.locator('[data-nav=events]').click();
+  await page.waitForFunction(() => document.querySelector('[data-realm="EU I"] [data-event=franky]'));
+  assert.match(await page.locator('[data-event=franky]').textContent(), /ŽIVĚ.*60\s000 \/ 120\s000.*Mainland.*TestWarrior/s);
+  assert.match(await page.locator('[data-event=icegolem]').textContent(), /Ice Golem.*ČEKÁ.*Objeví se za (59|60) min/s);
+  assert.match(await page.locator('[data-event=halloween]').textContent(), /SEZÓNNÍ/);
+  await page.locator('[data-notify-event=franky]').check();
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('uložena'));
+  assert.deepEqual(store.snapshot().settings.notifyEvents, ['franky']);
+  await page.screenshot({ path: 'test-results/events-desktop.png', fullPage: true });
   // Inventories: running character live, other account character and bank from the saved snapshot.
   await page.locator('[data-nav=inventory]').click();
   await page.locator('[data-inventory=TestWarrior]').click();

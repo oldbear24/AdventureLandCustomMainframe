@@ -1,5 +1,6 @@
 import { GAME_ORIGIN } from './runtime.js';
 import { ITEM_STATS } from './inventory.js';
+import { BOSSES, EVENTS } from './server-events.js';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
 export const MAP_NAME = /^[a-zA-Z0-9_]{1,40}$/;
@@ -116,7 +117,11 @@ export class GameData {
     for (const [key, item] of Object.entries(G.items)) if (ITEM_NAME.test(key)) items[key] = { ...itemDetails(G, key, item, titles), icon: iconOf(G, sheets, key, item) };
     const maps = Object.entries(G.maps).filter(([name, map]) => MAP_NAME.test(name) && map && !map.ignore && (G.geometry[map.key] || G.geometry[name]))
       .map(([name, map]) => ({ name, title: text(map.name, name) })).sort((a, b) => a.title.localeCompare(b.title));
-    return { G, items, maps, sheets, version: finite(G.version) };
+    // Every boss and event a server can report, for the event notification settings.
+    const eventKeys = new Set([...BOSSES, ...EVENTS, ...Object.keys(G.events || {}).filter(key => /^[a-z0-9_]{1,32}$/.test(key) && !G.events[key]?.disabled && key !== 'dreams')]);
+    const events = [...eventKeys].map(key => ({ key, title: text(G.events?.[key]?.name, text(G.monsters?.[key]?.name, key)), kind: BOSSES.includes(key) ? 'boss' : 'event' }))
+      .sort((a, b) => (a.kind === 'boss' ? 0 : 1) - (b.kind === 'boss' ? 0 : 1) || a.title.localeCompare(b.title));
+    return { G, items, maps, sheets, events, version: finite(G.version) };
   }
   // Refreshes at most every 6 hours; a failed refresh keeps serving the previous copy.
   async load() {
@@ -160,6 +165,7 @@ export class GameData {
     if (body.length > MAX_SHEET_SIZE || !body.subarray(0, 8).equals(PNG)) throw failure(502, 'Obrázky předmětů mají neočekávaný formát.');
     return body;
   }
+  async eventCatalog() { return (await this.load()).events; }
   // Display names are optional: an unreachable data.js must not hide an inventory.
   async itemNames() {
     try { return (await this.load()).items; } catch { return {}; }

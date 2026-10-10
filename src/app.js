@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { characterSchema, scriptSchema } from './store.js';
+import { characterSchema, scriptSchema, settingsSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
@@ -12,7 +12,10 @@ import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
-const PAGES = { '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '] };
+const PAGES = {
+  '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
+  '/events': ['events', 'Události · '],
+};
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
   const [content, dialogs = ''] = fragment.split('<!-- dialogs -->');
@@ -204,6 +207,16 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (!gameApi?.status().configured) throw new HttpError(409, 'Banka je živě vidět jen s postavou v bance. Pro uložený obsah připoj API token.');
     const bank = await gameApi.bank();
     res.json({ source: 'saved', observedAt: typeof bank.observed_at === 'string' ? bank.observed_at : null, retrievedAt: typeof bank.retrieved_at === 'string' ? bank.retrieved_at : new Date().toISOString(), via: null, gold: goldOf(bank.gold), packs: packsView(bank.packs, names) });
+  });
+  // Bosses and server events seen by running characters, one reading per realm, and which of them notify.
+  app.get('/api/server-events', async (_req, res) => {
+    const catalog = gameData ? await gameData.eventCatalog().catch(() => []) : [];
+    res.json({ now: Date.now(), realms: runtime.serverEvents(), catalog, notifyEvents: store.snapshot().settings.notifyEvents, notifications: runtime.notifier?.status() || { discord: false, telegram: false } });
+  });
+  app.put('/api/settings/notify-events', async (req, res) => {
+    const { keys } = z.object({ keys: settingsSchema.shape.notifyEvents }).strict().parse(req.body);
+    const saved = await store.update(state => { state.settings = { ...state.settings, notifyEvents: [...new Set(keys)].sort() }; return state.settings.notifyEvents; });
+    res.json({ notifyEvents: saved });
   });
   app.post('/api/transfers/prepare', async (req, res) => res.json(await transfers.prepare(transferSchema.parse(req.body), sessionFor(req).token)));
   app.post('/api/transfers/:id/confirm', async (req, res) => {

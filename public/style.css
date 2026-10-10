@@ -280,6 +280,26 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .item-stats td{text-align:right;font:13px Consolas,monospace;color:var(--text);padding:5px 0;border-top:1px solid var(--line)}
 .item-grid.equipment{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
 
+/* Events */
+.realm-list{display:grid;gap:14px}
+.realm .section-head{margin-bottom:8px}
+.realm .fine{margin:0 0 10px}
+.live-count{color:var(--accent);font-weight:600}
+.event-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.event-tile{border:1px solid var(--line);border-radius:9px;background:var(--panel-2);padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.event-tile.is-live{border-color:var(--line-strong);box-shadow:inset 3px 0 0 var(--accent)}
+.event-tile h3{margin:0;font-size:15px;overflow-wrap:anywhere}
+.event-tile small{color:var(--faint);font-size:11px}
+.event-tile .fine{margin:0}
+.event-line{font-size:13px;color:#c3d0c9;overflow-wrap:anywhere}
+.event-line a{color:var(--info)}
+.event-line small{color:var(--faint);font:11px Consolas,monospace;margin-left:4px}
+.event-line b{font:13px Consolas,monospace;color:var(--warn)}
+.meter.boss i{background:var(--danger)}
+.event-catalog{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 16px}
+.event-option{margin:6px 0}
+.event-option small{color:var(--faint);font-size:11px;font-weight:400}
+
 /* Dialogs and toast */
 dialog{color:var(--text);background:var(--panel);border:1px solid #3c5540;border-radius:10px;max-width:480px;width:calc(100% - 30px);padding:22px;max-height:90vh;overflow:auto}
 dialog::backdrop{background:#000b;backdrop-filter:blur(4px)}
