@@ -37,7 +37,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - Přihlášení k Adventure Land e-mailem a heslem přímo z panelu; pro Steam účet také vložení herní cookie. Herní relace se ukládá šifrovaně, herní heslo se neukládá.
 - Pouze HTTPS: při prvním startu si aplikace sama vygeneruje self-signed certifikát, nebo použije tvůj vlastní PEM certifikát a klíč. HTTP neobsluhuje vůbec.
 - API token „Connect an AI“: výpis postav účtu, import postav a synchronizace CODE slotů. Pro spouštění přiřazeného CODE je token potřebný.
-- **Živá mapa**: skutečné zdi, zóny monster, NPC a průchody každé mapy; pozice běžících postav se obnovují každých 5 sekund i s monstry a hráči v okolí. Postavu lze sledovat kamerou, mapu přibližovat kolečkem a posouvat tažením, kliknutím na průchod přejdeš na sousední mapu. S API tokenem vidíš i poslední uloženou pozici ostatních postav účtu.
+- **Živá mapa**: skutečné zdi, zóny monster, NPC a průchody každé mapy; pozice běžících postav i monster a hráčů v okolí se posílají v reálném čase přes WebSocket (`/api/live`, přibližně 4× za sekundu; při výpadku spojení panel spadne zpět na obnovu každých 5 sekund). Postavu lze sledovat kamerou, mapu přibližovat kolečkem a posouvat tažením, kliknutím na průchod přejdeš na sousední mapu. S API tokenem vidíš i poslední uloženou pozici ostatních postav účtu.
 - **Inventáře a banka**: vybavení, inventář a zlato každé postavy s herními ikonami předmětů a hledáním podle názvu. Běžící postava se čte živě, ostatní postavy a banka z uloženého stavu účtu přes API token (může být o něco starší). Pokud stojí běžící postava v bance, banka se čte živě. Geometrie map, názvy a ikony předmětů se stahují z veřejného `https://adventure.land/data.js` (ukládají se do paměti na 6 hodin); obrázky ikon načítá server z Adventure Land a panelu je předává sám, prohlížeč se na herní server nepřipojuje.
 - **Upozornění na problémy**: karta postavy se zvýrazní a panel ukáže toast, když postava umře, dlouho nic nedělá, opakovaně padá do reconnectu, dojdou jí lektvary nebo se pozastaví CODE. Počet postav s problémem je i v titulku záložky. Volitelně se upozornění posílají na Discord nebo Telegram.
 - **XP a statistiky**: ukazatel XP do dalšího levelu, XP/h a gold/h za poslední hodinu, odhad času do dalšího levelu a malý graf. Historie se drží v paměti (vzorek jednou za minutu) a restartem serveru se vynuluje.
@@ -159,6 +159,8 @@ PUBLIC_ORIGIN=https://al.tvoje-domena.cz
 ```bash
 docker compose up -d --force-recreate
 ```
+
+Živá mapa používá WebSocket na `/api/live`. Caddy ho přeposílá automaticky; u jiné proxy (např. nginx) povol upgrade spojení (`proxy_http_version 1.1`, hlavičky `Upgrade` a `Connection: upgrade`) a zachovej hlavičku `Host`. Bez toho mapa funguje dál, jen s obnovou každých 5 sekund.
 
 Pokud proxy běží v jiném kontejneru, její `127.0.0.1` není hostitel: připoj ji do stejné Docker sítě, proxyuj na `https://mainframe:3000` a přidej `mainframe` do `TLS_HOSTNAMES`. Port 3000 nevyžaduje veřejné zpřístupnění. Panel je pro jednoho správce; CODE spouštěj pouze vlastní nebo důvěryhodný, protože má oprávnění tvého herního účtu.
 

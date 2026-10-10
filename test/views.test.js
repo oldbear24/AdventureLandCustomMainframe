@@ -6,7 +6,10 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { GameApi } from '../src/game-api.js';
 import { GameData } from '../src/game-data.js';
-import { Runtime } from '../src/runtime.js';
+import { createServer } from 'node:http';
+import { WebSocket } from 'ws';
+import { Runtime, sanitizeState } from '../src/runtime.js';
+import { attachLive } from '../src/live.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
 import { createApp } from '../src/app.js';
@@ -143,4 +146,43 @@ test('a running character is read live, including the bank while inside it', asy
   assert.equal(bank.data.source, 'live'); assert.equal(bank.data.via, 'Runner'); assert.equal(bank.data.gold, 1000);
   assert.equal(bank.data.packs[0].items[0].title, 'Ring of Strength');
   f.runtime.sessions.clear();
+});
+
+test('game state is sanitized before it reaches the panel', () => {
+  const state = sanitizeState(JSON.stringify({ name: 'A'.repeat(100), level: 5, x: 1.5, y: 'bad', nearby: [{ kind: 'boss', name: 'goo', x: 1.4, y: 2, target: 1, extra: 'x' }, { x: 'nope' }], secret: 'x' }));
+  assert.equal(state.name.length, 32); assert.equal(state.x, 1.5); assert.equal(state.y, 0);
+  assert.deepEqual(state.nearby, [{ kind: 'character', name: 'goo', x: 1, y: 2, target: true }]);
+  assert.equal('secret' in state, false);
+  assert.equal(sanitizeState('{broken'), null); assert.equal(sanitizeState('x'.repeat(70_000)), null);
+});
+test('live WebSocket requires panel session and Origin, pushes state and closes on logout', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'al-live-'));
+  const config = configFromEnv({ ADMIN_PASSWORD: 'fixture-password-long-enough', DATA_DIR: directory });
+  const store = new Store(directory); await store.init();
+  const runtime = new Runtime(config, store);
+  const app = createApp(config, store, runtime);
+  const server = createServer(app); const live = attachLive(server, app, runtime);
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const host = `127.0.0.1:${server.address().port}`, origin = `http://${host}`;
+  app.locals.publicOrigin = origin;
+  t.after(async () => { live.close(); app.locals.dispose(); await runtime.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
+  const login = await fetch(`${origin}/api/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: config.password }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const status = headers => new Promise(resolve => {
+    const ws = new WebSocket(`ws://${host}/api/live`, { headers });
+    ws.on('unexpected-response', (_req, res) => resolve(res.statusCode)); ws.on('open', () => { ws.close(); resolve(101); }); ws.on('error', () => {});
+  });
+  assert.equal(await status({ Origin: origin }), 401);
+  assert.equal(await status({ Origin: 'https://evil.example', Cookie: cookie }), 403);
+  const ws = new WebSocket(`ws://${host}/api/live`, { headers: { Origin: origin, Cookie: cookie } });
+  const messages = [];
+  ws.on('message', data => messages.push(JSON.parse(data)));
+  await once(ws, 'open');
+  const waitFor = async predicate => { for (let i = 0; i < 50 && !messages.some(predicate); i++) await new Promise(resolve => setTimeout(resolve, 20)); return messages.find(predicate); };
+  assert.deepEqual((await waitFor(m => m.type === 'snapshot')).sessions, []);
+  runtime.emit('state', 'id-1', { x: 1 }); runtime.emit('state', 'id-1', { x: 2 }); runtime.emit('state', 'id-2', null);
+  assert.deepEqual((await waitFor(m => m.type === 'states')).states, [{ id: 'id-1', state: { x: 2 } }, { id: 'id-2', state: null }]);
+  const closed = once(ws, 'close');
+  await fetch(`${origin}/api/logout`, { method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal((await closed)[0], 4401);
 });

@@ -41,11 +41,14 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.use(express.json({ limit: '1mb' }));
   const cookieOptions = { httpOnly: true, secure: true, sameSite: 'strict', path: '/', maxAge: 12 * 60 * 60 * 1000 };
   const sessionFor = req => {
-    const token = (req.get('cookie') || '').split(';').map(c => c.trim()).find(c => c.startsWith('mf_session='))?.slice(11);
+    const token = (req.headers.cookie || '').split(';').map(c => c.trim()).find(c => c.startsWith('mf_session='))?.slice(11);
     const session = token && sessions.get(token);
     if (!session || session.expires < Date.now()) { if (token) sessions.delete(token); return null; }
     return { token, ...session };
   };
+  app.locals.publicOrigin = config.publicOrigin;
+  app.locals.sessionToken = req => sessionFor(req)?.token || null;
+  app.locals.sessionActive = token => { const session = sessions.get(token); return !!session && session.expires >= Date.now(); };
   app.post('/api/login', (req, res) => {
     const { username, password } = z.object({ username: z.string().max(80).default('admin'), password: z.string().max(1024) }).parse(req.body);
     const key = req.ip;
@@ -65,7 +68,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   app.use('/api', (req, res, next) => sessionFor(req) ? next() : res.status(401).json({ code: 'SESSION_REQUIRED', error: 'Přihlas se do panelu.' }));
   app.post('/api/logout', (req, res) => {
-    sessions.delete(sessionFor(req).token); res.clearCookie('mf_session', { ...cookieOptions, maxAge: undefined }).json({ ok: true });
+    const { token } = sessionFor(req); sessions.delete(token); app.locals.closeLive?.(token); res.clearCookie('mf_session', { ...cookieOptions, maxAge: undefined }).json({ ok: true });
   });
   app.get('/api/account', (_req, res) => res.json(account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null }));
   app.use('/api/account', (req, _res, next) => {

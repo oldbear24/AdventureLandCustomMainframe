@@ -7,6 +7,7 @@ import { GameAccount } from './game-account.js';
 import { GameApi } from './game-api.js';
 import { GameData } from './game-data.js';
 import { Notifier } from './notifier.js';
+import { attachLive } from './live.js';
 
 const config = configFromEnv();
 for (const warning of config.warnings) console.warn(warning);
@@ -17,13 +18,14 @@ runtime.notifier = new Notifier(config.notifications, fetch, message => runtime.
 const account = new GameAccount(config, runtime); await account.init();
 const app = createApp(config, store, runtime, account, gameApi, new GameData());
 const server = await createWebServer(config, app);
+const live = attachLive(server, app, runtime);
 server.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: https://${config.host}:${config.port}`));
 server.on('error', error => { console.error(error.message); process.exit(1); });
 let stopping = false;
 async function shutdown() {
   if (stopping) return; stopping = true;
   const timeout = setTimeout(() => process.exit(1), 20_000); timeout.unref();
-  app.locals.dispose();
+  app.locals.dispose(); live.close();
   const closed = new Promise(resolve => server.close(resolve));
   await runtime.close(); await closed; clearTimeout(timeout);
 }

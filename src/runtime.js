@@ -1,9 +1,12 @@
 import { chromium } from 'playwright';
 import { createHash, randomUUID } from 'node:crypto';
 import { NOTIFY_COOLDOWN, addSample, alertsFor, extrasView, isActivity, summarizeStats } from './telemetry.js';
+import { EventEmitter } from 'node:events';
 
 export const GAME_ORIGIN = 'https://adventure.land';
 export const LOG_LIMIT = 200;
+// How often the game page pushes a changed position to the panel.
+export const LIVE_INTERVAL = 250;
 export async function withDeadline(operation, milliseconds = 15_000) {
   let timer;
   try {
@@ -20,8 +23,29 @@ export function characterUrl(character) {
   return url.href;
 }
 
-export class Runtime {
+// Game pages report state as JSON; keep only bounded, typed fields.
+export function sanitizeState(raw) {
+  let state = raw;
+  if (typeof state === 'string') {
+    if (state.length > 64_000) return null;
+    try { state = JSON.parse(state); } catch { return null; }
+  }
+  if (!state || typeof state !== 'object') return null;
+  const num = value => Number.isFinite(value) ? value : 0;
+  const str = (value, max = 40) => typeof value === 'string' ? value.slice(0, max) : '';
+  const nearby = (Array.isArray(state.nearby) ? state.nearby.slice(0, 60) : []).filter(e => e && Number.isFinite(e.x) && Number.isFinite(e.y))
+    .map(e => ({ kind: e.kind === 'monster' ? 'monster' : 'character', name: str(e.name), x: Math.round(e.x), y: Math.round(e.y), target: !!e.target }));
+  return {
+    name: str(state.name, 32), ctype: str(state.ctype, 20), level: num(state.level), hp: num(state.hp), max_hp: num(state.max_hp), mp: num(state.mp), max_mp: num(state.max_mp),
+    gold: num(state.gold), xp: num(state.xp), map: str(state.map), x: num(state.x), y: num(state.y), rip: !!state.rip, ping: num(state.ping),
+    codeRunning: !!state.codeRunning, nearby, target: typeof state.target === 'string' ? state.target.slice(0, 40) : null, observedAt: new Date().toISOString(),
+  };
+}
+
+// Emits 'state' (id, state) whenever a running character reports a new position.
+export class Runtime extends EventEmitter {
   constructor(config, store, browserType = chromium, gameApi = null) {
+    super();
     this.config = config; this.store = store; this.browserType = browserType;
     this.gameApi = gameApi; this.nextCodeSync = 0;
     this.browser = null; this.sessions = new Map(); this.logs = [];
@@ -141,6 +165,28 @@ export class Runtime {
         };
       }
     }));
+    // The page pushes changed state itself, so the live map does not wait for the 5 s tick.
+    await page.exposeFunction('__mainframeState', json => this.pushState(session, page, json));
+    await withDeadline(page.evaluate(interval => {
+      window.__mainframeSnapshot = () => {
+        const c = window.character;
+        if (!c || !window.socket?.connected) return null;
+        const x = c.real_x ?? c.x, y = c.real_y ?? c.y;
+        // Nearest visible monsters and players for the live map.
+        const nearby = Object.values(window.entities || {}).filter(e => e && !e.dead && !e.rip && e.map === c.map && Number.isFinite(e.real_x ?? e.x) && Number.isFinite(e.real_y ?? e.y))
+          .map(e => ({ kind: e.type === 'monster' ? 'monster' : 'character', name: String(e.type === 'monster' ? e.mtype : e.name).slice(0, 40), x: Math.round(e.real_x ?? e.x), y: Math.round(e.real_y ?? e.y), target: e.target === c.name }))
+          .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, 60);
+        return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null };
+      };
+      clearInterval(window.__mainframeTimer);
+      let last = '';
+      window.__mainframeTimer = setInterval(() => {
+        const state = window.__mainframeSnapshot();
+        const json = state && JSON.stringify(state);
+        if (!json || json === last) return;
+        last = json; window.__mainframeState(json).catch(() => {});
+      }, interval);
+    }, LIVE_INTERVAL));
     await this.loadScript(session, prefetched);
     session.status = 'running'; session.error = null; session.attempts = 0; session.lastActivityAt = Date.now();
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
@@ -305,8 +351,17 @@ export class Runtime {
       return { status: 'unknown', message: 'Spojení během převodu selhalo nebo vypršelo. Zkontroluj inventář a herní logy před dalším pokusem.' };
     }
   }
+  pushState(session, page, json) {
+    if (this.sessions.get(session.id) !== session || session.page !== page || session.status !== 'running') return;
+    const state = sanitizeState(json);
+    if (!state) return;
+    // Live pushes carry position and vitals only; the tick adds conditions, cooldowns and party.
+    session.state = session.state ? { ...session.state, ...state } : state;
+    this.emit('state', session.id, session.state);
+  }
   failed(session, error) {
     session.status = 'reconnecting'; session.error = String(error.message || error);
+    session.state = null; this.emit('state', session.id, null);
     session.attempts += 1;
     session.nextRetry = Date.now() + Math.min(300_000, 10_000 * 2 ** Math.min(session.attempts - 1, 5));
     this.log(session.id, 'error', `${session.error}; další pokus za ${Math.round((session.nextRetry - Date.now()) / 1000)} s.`);
@@ -354,6 +409,7 @@ export class Runtime {
         const { extras, ...state } = session.state;
         const previous = session.previousState;
         session.state = { ...state, ...extrasView(extras), observedAt: new Date().toISOString() };
+        this.emit('state', session.id, session.state);
         await this.observe(session, previous);
       } catch (error) { session.state = null; this.failed(session, error); }
     }
@@ -396,7 +452,7 @@ export class Runtime {
   async stopInternal(id) {
     const session = this.sessions.get(id);
     if (!session) return;
-    this.sessions.delete(id);
+    this.sessions.delete(id); this.emit('state', id, null);
     if (session.context) await withDeadline(session.context.close(), 5000).catch(() => {});
     this.log(id, 'info', 'Postava odpojena.');
   }

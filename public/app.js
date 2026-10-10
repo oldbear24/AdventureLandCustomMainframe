@@ -10,7 +10,7 @@ async function api(url, method = 'GET', body) {
   const response = await fetch(`/api${url}`, { method, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; resetViews(); }
+    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; resetViews(); disconnectLive(); }
     throw new Error(data.error + (data.issues ? ` ${data.issues.map(i => `${i.field}: ${i.message}`).join(', ')}` : ''));
   }
   return data;
@@ -249,7 +249,7 @@ function renderLogs() {
 }
 async function refresh(initial = false) {
   if (polling) return; polling = true;
-  try { dashboard = await api('/dashboard'); active = true; $('login').hidden = true; $('panel').hidden = false; render(); }
+  try { dashboard = await api('/dashboard'); active = true; $('login').hidden = true; $('panel').hidden = false; render(); connectLive(); }
   catch (error) { if (!initial && active) { $('stat-status').textContent = 'Nedostupné'; $('last-update').textContent = 'Spojení s panelem bylo přerušeno'; } }
   finally { polling = false; }
 }
@@ -260,7 +260,7 @@ $('login-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
-  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; resetViews(); }
+  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; for (const id of ['account-dialog', 'transfer-dialog', 'character-dialog', 'move-dialog']) $(id).close(); clearCredentials(); $('owned-characters').replaceChildren(); ownedCharacters = []; selectedScript = ''; selectedRemoteVersion = selectedRemoteSlot = null; dirty = false; resetViews(); disconnectLive(); }
   catch (error) { toast(error.message, true); }
 });
 function openAccount() {
@@ -607,7 +607,7 @@ function renderMap() {
   if (followed) { mapState.view.x = followed.state.x - mapState.view.w / 2; mapState.view.y = followed.state.y - mapState.view.h / 2; }
   const running = runningSessions().filter(s => s.state.map === name);
   const saved = ownedCharacters.filter(c => c.map === name && Number.isFinite(c.x) && !running.some(s => s.state.name?.toLowerCase() === c.name.toLowerCase()));
-  $('map-status').textContent = running.length ? `${running.length} ${running.length === 1 ? 'postava' : 'postavy'} na této mapě · obnova každých 5 s` : saved.length ? 'Na této mapě neběží žádná postava; zobrazeny jsou uložené pozice.' : 'Na této mapě teď nikdo není.';
+  $('map-status').textContent = running.length ? `${running.length} ${running.length === 1 ? 'postava' : 'postavy'} na této mapě · ${liveConnected ? 'živě přes WebSocket' : 'obnova každých 5 s (živé spojení se obnovuje)'}` : saved.length ? 'Na této mapě neběží žádná postava; zobrazeny jsou uložené pozice.' : 'Na této mapě teď nikdo není.';
   drawOverlay(map, running, saved);
 }
 function drawOverlay(map, running, saved) {
@@ -788,6 +788,43 @@ function resetViews() {
   $('inventory-detail').innerHTML = '<div class="empty"><h2>Vyber postavu nebo banku.</h2><p>Uvidíš vybavení, inventář a zlato.</p></div>';
   $('inventory-targets').replaceChildren(); delete $('inventory-targets').dataset.html;
   mapState.follow = ''; mapState.name = '';
+}
+// Real-time state over WebSocket; the 5 s dashboard poll stays as a fallback.
+let live = null, liveConnected = false, liveRetry = 0, liveTimer = null, liveFrame = 0;
+function connectLive() {
+  if (live || !active || typeof WebSocket === 'undefined') return;
+  clearTimeout(liveTimer);
+  const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`);
+  live = socket;
+  socket.onopen = () => { liveRetry = 0; liveConnected = true; scheduleLiveRender(); };
+  socket.onmessage = event => {
+    let message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    applyLive(message.type === 'snapshot' ? message.sessions : message.states);
+  };
+  socket.onclose = event => {
+    if (live !== socket) return;
+    live = null; liveConnected = false; scheduleLiveRender();
+    if (active && event.code !== 4401) liveTimer = setTimeout(connectLive, Math.min(30_000, 1000 * 2 ** liveRetry++));
+  };
+}
+function disconnectLive() {
+  clearTimeout(liveTimer);
+  const socket = live; live = null; liveConnected = false;
+  socket?.close();
+}
+function applyLive(states) {
+  if (!dashboard || !Array.isArray(states)) return;
+  for (const { id, state } of states) {
+    const session = dashboard.sessions.find(s => s.id === id);
+    if (session) session.state = state;
+  }
+  scheduleLiveRender();
+}
+// At most one map redraw per animation frame, and none while the map is being dragged.
+function scheduleLiveRender() {
+  if (liveFrame) return;
+  liveFrame = requestAnimationFrame(() => { liveFrame = 0; if (dashboard && !$('view-map').hidden && !mapDrag) renderMap(); });
 }
 window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
 showView(location.hash.slice(1));

@@ -14,6 +14,7 @@ import { configFromEnv } from '../src/config.js';
 import { GameAccount } from '../src/game-account.js';
 import { GameApi } from '../src/game-api.js';
 import { GameData } from '../src/game-data.js';
+import { attachLive } from '../src/live.js';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-browser-'));
 const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', DATA_DIR: directory });
@@ -90,7 +91,7 @@ const gameData = new GameData(async url => {
   assert.equal(url, `${GAME_ORIGIN}/data.js`); return new Response(`var G=${JSON.stringify(fixtureData)};`);
 });
 const app = createApp(config, store, runtime, account, gameApi, gameData);
-const server = await createWebServer(config, app); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+const server = await createWebServer(config, app); const live = attachLive(server, app, runtime); server.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `https://127.0.0.1:${server.address().port}`;
 await mkdir('test-results', { recursive: true });
 let uiBrowser;
@@ -218,6 +219,11 @@ try {
   await page.waitForFunction(() => document.querySelector('#map-nearby').textContent.includes('goo'));
   await page.evaluate(() => { document.getElementById('toast').hidden = true; });
   await page.screenshot({ path: 'test-results/map-desktop.png', fullPage: true });
+  // Real time: a move in the game page reaches the map over the WebSocket without a dashboard tick.
+  await page.waitForFunction(() => document.querySelector('#map-status').textContent.includes('WebSocket'));
+  await gamePage.evaluate(() => { window.character.x = 137; window.character.y = -41; });
+  await page.waitForFunction(() => document.querySelector('#map-overlay .map-own circle')?.getAttribute('cx') === '137', null, { timeout: 3000 });
+  assert.equal(await page.locator('#map-overlay .map-own circle').getAttribute('cy'), '-41');
   await page.locator('#map-fit').click();
   await page.locator('#map-overlay [data-door=bank]').click();
   await page.waitForFunction(() => document.querySelector('#map-name').textContent === 'The Bank');
@@ -299,9 +305,9 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, live map and inventories/bank, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map over WebSocket and inventories/bank, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
-  app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
+  live.close(); app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));
   await rm(directory, { recursive: true, force: true });
 }
