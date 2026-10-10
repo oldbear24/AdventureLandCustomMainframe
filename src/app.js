@@ -216,9 +216,9 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (!delivered) throw new HttpError(502, 'Upozornění se nepodařilo doručit. Podrobnosti jsou v systémových logech.');
     res.json({ delivered });
   });
-  // Start, stop or move several characters at once; each character reports its own result.
+  // Start, stop, reload CODE, relog or move several characters at once; each character reports its own result.
   const batchSchema = z.object({
-    action: z.enum(['start', 'stop', 'move']), ids: z.array(z.uuid()).max(4).optional(),
+    action: z.enum(['start', 'stop', 'reload', 'relog', 'move']), ids: z.array(z.uuid()).max(4).optional(),
     region: characterSchema.shape.region.optional(), server: characterSchema.shape.server.optional(),
   }).strict().refine(input => input.action !== 'move' || (input.region && input.server), 'Přesun vyžaduje region a server.');
   app.post('/api/characters/batch', async (req, res) => {
@@ -242,6 +242,21 @@ export function createApp(config, store, runtime, account = null, gameApi = null
         await store.update(state => { for (const c of state.characters) if (ids.has(c.id)) c.autoStart = false; });
         for (const character of targets) { await runtime.stopInternal(character.id); report(character); }
       });
+    } else if (input.action === 'reload') {
+      // Only connected characters run CODE; the rest are skipped.
+      for (const character of targets) {
+        if (runtime.sessions.get(character.id)?.status !== 'running') { report(character, null, true); continue; }
+        try { await runtime.reload(character.id); report(character); } catch (error) { report(character, error); }
+      }
+    } else if (input.action === 'relog') {
+      // Active characters are stopped and logged in again; autostart is kept.
+      const active = await runtime.exclusive(async () => {
+        const list = targets.filter(c => runtime.sessions.has(c.id));
+        for (const character of list) await runtime.stopInternal(character.id);
+        return list;
+      });
+      for (const character of targets.filter(c => !active.includes(c))) report(character, null, true);
+      await startAll(active);
     } else {
       // Running characters are stopped, moved and started again; autostart is kept.
       const running = await runtime.exclusive(async () => {

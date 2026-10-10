@@ -178,6 +178,8 @@ function render() {
   const stopped = dashboard.characters.filter(c => !sessions.has(c.id));
   $('start-all').disabled = !stopped.length || !dashboard.config.authConfigured || pending.has('batch');
   $('stop-all').disabled = !dashboard.sessions.length || pending.has('batch');
+  $('reload-all').disabled = !running.length || pending.has('batch');
+  $('relog-all').disabled = !dashboard.sessions.length || !dashboard.config.authConfigured || pending.has('batch');
   $('move-all').disabled = !dashboard.characters.length || pending.has('batch');
   renderParty(); announceAlerts();
   renderScriptList(); updateEditingHeader();
@@ -588,6 +590,8 @@ async function batch(body, label) {
 }
 $('start-all').addEventListener('click', () => batch({ action: 'start' }, 'Spuštění všech'));
 $('stop-all').addEventListener('click', () => { if (confirm('Zastavit všechny běžící postavy? Vypne se i jejich autostart.')) batch({ action: 'stop' }, 'Zastavení všech'); });
+$('reload-all').addEventListener('click', () => batch({ action: 'reload' }, 'Restart CODE'));
+$('relog-all').addEventListener('click', () => { if (confirm('Odhlásit a znovu přihlásit všechny běžící postavy?')) batch({ action: 'relog' }, 'Relog všech'); });
 $('move-all').addEventListener('click', () => {
   const first = dashboard.characters[0];
   $('move-region').value = first?.region || 'EU'; $('move-server').value = first?.server || 'I';

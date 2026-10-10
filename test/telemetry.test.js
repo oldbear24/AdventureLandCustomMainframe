@@ -126,7 +126,7 @@ test('tick reports telemetry, raises alerts once and reloads idle CODE when enab
   assert.ok(Number.isFinite(dashboard.data.now));
   f.runtime.sessions.clear();
 });
-test('batch actions stop all, move servers and report start failures per character', async t => {
+test('batch actions stop all, reload CODE, relog, move servers and report start failures per character', async t => {
   const f = await fixture(t);
   const ids = ['6f1c1a52-58a2-4a39-9a43-6d4f0f0d1a21', '6f1c1a52-58a2-4a39-9a43-6d4f0f0d1a22'];
   await f.store.update(state => {
@@ -148,6 +148,15 @@ test('batch actions stop all, move servers and report start failures per charact
   const alpha = f.store.snapshot().characters.find(c => c.id === ids[0]);
   assert.deepEqual([alpha.region, alpha.server, alpha.autoStart], ['US', 'II', true]);
   assert.equal(f.store.snapshot().characters.find(c => c.id === ids[1]).server, 'I');
+  const reloads = [];
+  f.runtime.reload = async id => { reloads.push(id); };
+  const reloaded = await f.request('/api/characters/batch', 'POST', { action: 'reload' });
+  assert.deepEqual(reloaded.data.results.map(r => [r.name, r.ok, r.skipped]), [['Alpha', true, false], ['Beta', true, true]]);
+  assert.deepEqual(reloads, [ids[0]], 'only connected characters reload CODE');
+  const relogged = await f.request('/api/characters/batch', 'POST', { action: 'relog' });
+  assert.deepEqual(relogged.data.results.map(r => [r.name, r.ok, r.skipped]), [['Beta', true, true], ['Alpha', true, false]]);
+  assert.deepEqual(starts, [ids[0], ids[0], ids[0]], 'a running character logs in again');
+  assert.equal(f.store.snapshot().characters.find(c => c.id === ids[0]).autoStart, true);
   const stopped = await f.request('/api/characters/batch', 'POST', { action: 'stop' });
   assert.equal(stopped.data.results.length, 2);
   assert.equal(f.runtime.sessions.size, 0);

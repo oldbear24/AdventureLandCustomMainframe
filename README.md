@@ -45,7 +45,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - **Efekty, zásoby a cooldowny**: aktivní buffy a debuffy, počet lektvarů HP/MP, volná místa v inventáři a odpočet cooldownů použitých skillů (rozbalovací část karty).
 - **Party přehled**: kdo je v partě, na jakém serveru, na jaké mapě a jak daleko od leadera; vzdálenosti mezi postavami v panelu a varování, když běží na různých serverech.
 - **Detekce zamrzlého CODE**: postava bez pohybu, útoku, skillu, XP i změny zlata po nastavenou dobu je označená jako nečinná; volitelně se jí CODE automaticky znovu načte (↻ CODE).
-- **Dávkové akce**: Spustit vše, Zastavit vše a přesun vybraných postav na jiný server (běžící se zastaví, přesunou a znovu spustí).
+- **Dávkové akce**: Spustit vše, Zastavit vše, ↻ CODE vše (znovu načte CODE všech připojených postav), ⟳ Relog vše (běžící postavy se odhlásí a znovu přihlásí, autostart zůstává) a přesun vybraných postav na jiný server (běžící se zastaví, přesunou a znovu spustí).
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 200 záznamů, panel je posuvný).
 
