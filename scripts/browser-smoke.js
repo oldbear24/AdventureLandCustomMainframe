@@ -487,7 +487,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, CODE set() storage view/edit/delete, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, items across the account, long-term stats charts, persistent journal, server bosses/events with notification settings, monster table, system usage, CODE set() storage view/edit/delete, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   live.close(); app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

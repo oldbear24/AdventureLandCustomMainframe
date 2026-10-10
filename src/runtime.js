@@ -524,7 +524,11 @@ export class Runtime extends EventEmitter {
           const members = c.party && window.party && typeof window.party === 'object' ? Object.entries(window.party).map(([name, p]) => ({ name, ctype: p?.type, level: p?.level, map: p?.map, x: p?.x, y: p?.y })) : [];
           return { name: c.name, ctype: c.ctype, level: c.level, hp: c.hp, max_hp: c.max_hp, mp: c.mp, max_mp: c.max_mp, gold: c.gold, xp: c.xp, map: c.map, x, y, rip: !!c.rip, ping: c.ping, codeRunning: !!window.code_active, nearby, target: typeof c.target === 'string' ? c.target : null, at: Date.now(),
             // Server-wide events and bosses with their game names; sanitized by serverEventsView.
-            server: { S: window.S && typeof window.S === 'object' ? JSON.parse(JSON.stringify(window.S)) : null, titles: Object.fromEntries(Object.keys(window.S && typeof window.S === 'object' ? window.S : {}).slice(0, 80).map(key => [key, G.events?.[key]?.name || G.monsters?.[key]?.name || null])) },
+            // A value that cannot be copied must not fail the whole reading of the character.
+            server: (() => {
+              try { return { S: window.S && typeof window.S === 'object' ? JSON.parse(JSON.stringify(window.S)) : null, titles: Object.fromEntries(Object.keys(window.S && typeof window.S === 'object' ? window.S : {}).slice(0, 80).map(key => [key, G.events?.[key]?.name || G.monsters?.[key]?.name || null])) }; }
+              catch { return null; }
+            })(),
             extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, party: c.party ? { leader: c.party, members } : null } };
         }));
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
@@ -542,7 +546,7 @@ export class Runtime extends EventEmitter {
   // One reading per realm, from the first running character there, so two clients cannot disagree about one boss.
   updateServers() {
     const seen = new Set(), now = Date.now();
-    const notify = new Set(this.store.snapshot().settings?.notifyEvents || []);
+    let notify = null;
     for (const session of this.sessions.values()) {
       if (session.status !== 'running' || !session.server || !session.character) continue;
       const realm = `${session.character.region} ${session.character.server}`;
@@ -555,6 +559,7 @@ export class Runtime extends EventEmitter {
         const { event } = change, boss = event.kind === 'boss';
         const message = change.change === 'start' ? (boss ? `${change.title} je tady${event.map ? ` (mapa ${event.map})` : ''}.` : `Začala událost ${change.title}.`) : (boss ? `${change.title} zmizel nebo byl poražen.` : `Událost ${change.title} skončila.`);
         this.history?.record({ type: 'event', message: `${realm}: ${message}`, realm });
+        notify ??= new Set(this.store.snapshot().settings?.notifyEvents || []);
         if (change.change === 'start' && notify.has(change.key)) this.notifier?.send(`${boss ? '🐉' : '🎉'} ${realm}: ${message}`).catch(() => {});
       }
     }
