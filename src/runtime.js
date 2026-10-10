@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { createHash } from 'node:crypto';
 
 export const GAME_ORIGIN = 'https://adventure.land';
+export const LOG_LIMIT = 200;
 export async function withDeadline(operation, milliseconds = 15_000) {
   let timer;
   try {
@@ -29,7 +30,7 @@ export class Runtime {
   log(id, level, message) {
     const text = this.redact(message);
     this.logs.push({ id: ++this.sequence, at: new Date().toISOString(), characterId: id, level, message: text.slice(0, 4000) });
-    if (this.logs.length > 1000) this.logs.shift();
+    if (this.logs.length > LOG_LIMIT) this.logs.shift();
   }
   redact(message) {
     let text = String(message);
@@ -78,12 +79,19 @@ export class Runtime {
     }
     if (this.sessions.has(id)) return;
     if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
-    const session = { id, character, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null };
+    // Download the current slot before logging in, so a missing or unreachable CODE stops the start early.
+    let prefetched;
+    try { prefetched = await this.downloadScript(character); }
+    catch (error) { throw Object.assign(new Error(`Stažení CODE před startem selhalo: ${this.redact(error.message)}`), { status: 502 }); }
+    if (prefetched) this.log(id, 'info', `CODE stažen ze slotu ${prefetched.remoteSlot} (verze ${prefetched.remoteVersion}): ${prefetched.name}`);
+    const session = { id, character, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null, prefetched };
     this.sessions.set(id, session);
     try { await this.connect(session); }
     catch (error) { this.failed(session, error); }
   }
   async connect(session) {
+    // Only the first connection uses the copy downloaded by start; reconnects download again.
+    const prefetched = session.prefetched; session.prefetched = null;
     if (session.context) await withDeadline(session.context.close(), 5000).catch(() => {});
     session.context = null; session.page = null; session.state = null;
     session.status = 'starting';
@@ -128,24 +136,27 @@ export class Runtime {
         };
       }
     }));
-    await this.loadScript(session);
+    await this.loadScript(session, prefetched);
     session.status = 'running'; session.error = null; session.attempts = 0;
     this.log(session.id, 'info', `Připojeno: ${session.character.name} / ${session.character.region} ${session.character.server}`);
   }
+  // Reads the character's current CODE from its game slot and refreshes the local copy.
+  async downloadScript(character, fetched = null) {
+    const script = this.store.snapshot().scripts.find(s => s.id === character?.scriptId);
+    if (!character?.scriptId) return null;
+    if (!script) throw new Error('Přiřazený skript neexistuje.');
+    if (!script.remoteSlot || !this.gameApi) throw new Error('Propoj CODE s herním slotem a připoj API token.');
+    const current = fetched || await this.gameApi.getCode(script.remoteSlot);
+    if (current.remoteSlot !== script.remoteSlot) throw new Error('CODE slot nesouhlasí.');
+    await this.store.update(state => {
+      const cached = state.scripts.find(s => s.id === script.id);
+      Object.assign(cached, current, { updatedAt: new Date().toISOString() });
+    });
+    return { ...script, ...current };
+  }
   async loadScript(session, fetched = null) {
     const character = this.store.snapshot().characters.find(c => c.id === session.id);
-    let script = this.store.snapshot().scripts.find(s => s.id === character?.scriptId);
-    if (character?.scriptId && !script) throw new Error('Přiřazený skript neexistuje.');
-    if (script) {
-      if (!script.remoteSlot || !this.gameApi) throw new Error('Propoj CODE s herním slotem a připoj API token.');
-      const current = fetched || await this.gameApi.getCode(script.remoteSlot);
-      if (current.remoteSlot !== script.remoteSlot) throw new Error('CODE slot nesouhlasí.');
-      await this.store.update(state => {
-        const cached = state.scripts.find(s => s.id === script.id);
-        Object.assign(cached, current, { updatedAt: new Date().toISOString() });
-      });
-      script = { ...script, ...current };
-    }
+    const script = await this.downloadScript(character, fetched);
     await withDeadline(session.page.evaluate(source => {
       if (window.code_run) window.stop_runner();
       if (source) window.start_runner('maincode', source);

@@ -133,7 +133,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   app.get('/api/dashboard', (_req, res) => res.json({
     characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
-    sessions: runtime.snapshot(), logs: runtime.logs.slice(-150),
+    sessions: runtime.snapshot(), logs: runtime.logs,
     config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
     gameApi: gameApi?.status() || { configured: false },

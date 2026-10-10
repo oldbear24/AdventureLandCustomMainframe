@@ -103,3 +103,18 @@ test('local drafts cannot run, active slot identity cannot change, and removing 
   await f.store.update(state => { state.characters = state.characters.filter(c => c.scriptId !== shared.id); });
   assert.equal((await f.request(`/api/scripts/${shared.id}`, 'DELETE', {})).status, 200); assert.ok(f.cloud.code); assert.equal(f.cloud.writes, 0);
 });
+test('start downloads the slot before connecting and refuses to connect when the download fails', async t => {
+  const f = await fixture(t), script = (await f.request('/api/code-slots/1/import', 'POST', {})).data;
+  let launches = 0;
+  const runtime = new Runtime(f.runtime.config, f.store, { launch: async () => { launches++; throw new Error('No browser in tests'); } }, f.api);
+  t.after(() => runtime.close());
+  const id = randomUUID();
+  await f.store.update(state => state.characters.push({ id, name: 'Warrior', region: 'EU', server: 'I', scriptId: script.id, autoStart: false }));
+  f.cloud.available = false;
+  await assert.rejects(runtime.start(id), /Stažení CODE před startem selhalo/);
+  assert.equal(runtime.sessions.size, 0); assert.equal(launches, 0);
+  f.cloud.available = true; f.cloud.code = { ...f.cloud.code, version: 4, code: 'console.log("downloaded before start");' };
+  await runtime.start(id);
+  assert.equal(f.store.snapshot().scripts[0].source, f.cloud.code.code); assert.equal(launches, 1);
+  assert.ok(runtime.logs.some(l => l.message.includes('CODE stažen ze slotu 1 (verze 4)')));
+});

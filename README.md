@@ -38,7 +38,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - Pouze HTTPS: při prvním startu si aplikace sama vygeneruje self-signed certifikát, nebo použije tvůj vlastní PEM certifikát a klíč. HTTP neobsluhuje vůbec.
 - API token „Connect an AI“: výpis postav účtu, import postav a synchronizace CODE slotů. Pro spouštění přiřazeného CODE je token potřebný.
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
-- Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 1 000 záznamů).
+- Atomické ukládání postav a skriptů do Docker volume; logy zůstávají v paměti (nejvýše 200 záznamů, panel je posuvný).
 
 Tento projekt nepoužívá placené přiřazení herního Mainframu. Herní relace běží na tvém serveru. Stávající CODE může používat funkce hry jako v prohlížeči; další postavy spravuj přes panel. Pokud skript sám použije `start_character`, vzniknou podřízené herní rámce, které panel samostatně nepočítá. Limit hry stále platí. Projekt neposkytuje vlastní herní server ani další účty.
 

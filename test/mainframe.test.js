@@ -126,7 +126,7 @@ test('redaction and deadline protect logs and a stuck game page', async t => {
   assert.equal(f.runtime.logs[0].message.includes(config().authCookie), false);
   assert.equal(f.runtime.redact('user_auth=user-fake-auth-secret').includes('user-fake-auth-secret'), false);
   for (let i = 0; i < 1100; i++) f.runtime.log(null, 'info', 'bounded');
-  assert.equal(f.runtime.logs.length, 1000);
+  assert.equal(f.runtime.logs.length, 200);
   await assert.rejects(withDeadline(new Promise(() => {}), 10), /časovém limitu/);
   const url = new URL(characterUrl({ name: 'Warrior', region: 'EU', server: 'I' }));
   assert.equal(url.origin, 'https://adventure.land'); assert.equal(url.searchParams.get('no_graphics'), 'true'); assert.equal(url.searchParams.has('code'), false);
