@@ -288,6 +288,23 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   await page.screenshot({ path: 'test-results/stats-mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1100 });
+  // Journal: the persistent timeline, filtered by type and character.
+  await page.locator('[data-nav=journal]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.journal-entry').length > 3);
+  const journal = await page.locator('#journal-list').textContent();
+  assert.match(journal, /Dnes/); assert.match(journal, /Start.*TestWarrior.*Spuštěno na EU I/s); assert.match(journal, /Připojeno/); assert.match(journal, /CODE Fixture warrior/);
+  assert.match(journal, /Upozornění.*TestWarrior.*Docházejí lektvary/s);
+  await page.locator('#journal-types [data-type=death]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.journal-entry').length === 1);
+  assert.match(await page.locator('.journal-entry').textContent(), /Smrt.*Beta.*zemřela/s);
+  assert.match(page.url(), /type=death/);
+  await page.locator('#journal-types [data-type=""]').click();
+  await page.locator('#journal-character').selectOption({ label: 'TestWarrior' });
+  await page.waitForFunction(() => [...document.querySelectorAll('.journal-entry .journal-who')].every(e => e.textContent === 'TestWarrior'));
+  // A new entry appears with the next dashboard refresh.
+  runtime.journal(store.snapshot().characters[0].id, 'level', 'Dosažen level 43.');
+  await page.waitForFunction(() => document.querySelector('.journal-entry').textContent.includes('level 43'), null, { timeout: 8000 });
+  await page.screenshot({ path: 'test-results/journal-desktop.png', fullPage: true });
   // Events: the server's bosses and events as the running character's game client sees them.
   await page.locator('[data-nav=events]').click();
   await page.waitForFunction(() => document.querySelector('[data-realm="EU I"] [data-event=franky]'));

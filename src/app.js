@@ -8,13 +8,14 @@ import { characterSchema, scriptSchema, settingsSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { aggregateItems, equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
+import { JOURNAL_TYPES } from './history.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
 const PAGES = {
   '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '],
-  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/events': ['events', 'Události · '],
+  '/items': ['items', 'Předměty · '], '/stats': ['stats', 'Statistiky · '], '/journal': ['journal', 'Deník · '], '/events': ['events', 'Události · '],
 };
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
@@ -236,6 +237,16 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     itemsLoading ||= collectItems().then(body => { itemsCache = { at: Date.now(), body }; return body; }).finally(() => { itemsLoading = null; });
     res.json(await itemsLoading);
   });
+  // The persistent journal, newest first; after polls for new entries, before pages back.
+  app.get('/api/journal', (req, res) => {
+    const id = z.coerce.number().int().min(0).optional();
+    const query = z.object({
+      types: z.string().max(200).optional().transform(value => value ? value.split(',').filter(Boolean) : null).pipe(z.array(z.enum(JOURNAL_TYPES)).nullable()),
+      character: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(), before: id, after: id, limit: z.coerce.number().int().min(1).max(200).default(100),
+    }).parse(req.query);
+    const result = runtime.history ? runtime.history.query({ types: query.types, characterId: query.character ?? null, before: query.before ?? null, after: query.after ?? null, limit: query.limit }) : { entries: [], more: false };
+    res.json({ ...result, available: !!runtime.history, types: JOURNAL_TYPES });
+  });
   // Long-term XP/gold stats from the persistent samples. Buckets end at the next whole hour or day of the viewer's time zone.
   const RANGES = { '24h': [86_400_000, 3_600_000], '3d': [3 * 86_400_000, 6 * 3_600_000], '7d': [7 * 86_400_000, 86_400_000], '14d': [14 * 86_400_000, 86_400_000] };
   app.get('/api/history/stats', (req, res) => {
@@ -323,6 +334,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
         for (const character of active) await runtime.stopInternal(character.id);
         const ids = new Set(targets.map(c => c.id));
         await store.update(state => { for (const c of state.characters) if (ids.has(c.id)) { c.region = input.region; c.server = input.server; } });
+        for (const character of targets) if (character.region !== input.region || character.server !== input.server) runtime.journal(character.id, 'move', `Přesun z ${character.region} ${character.server} na ${input.region} ${input.server}.`);
         return active;
       });
       for (const character of targets.filter(c => !running.includes(c))) report(character);

@@ -116,7 +116,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -240,6 +240,24 @@ test('long-term stats are bucketed by the viewer\'s hours and days', async t => 
   assert.equal(week.data.bucketMs, 86_400_000); assert.equal((week.data.to - 300 * 60_000) % 86_400_000, 0);
   assert.equal((await f.request('/api/history/stats?range=1y')).status, 400);
   assert.equal((await f.request('/api/history/stats?offset=9999')).status, 400);
+  f.runtime.history = null;
+});
+
+test('the journal is filtered by type and character and paged both ways', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.deepEqual((await f.request('/api/journal')).data, { entries: [], more: false, available: false, types: (await f.request('/api/journal')).data.types });
+  f.runtime.history = new History(null);
+  for (const [type, characterId] of [['start', 'id-1'], ['death', 'id-1'], ['event', null], ['death', 'id-2'], ['level', 'id-1']]) f.runtime.history.record({ type, characterId, message: type });
+  const all = (await f.request('/api/journal')).data;
+  assert.deepEqual(all.entries.map(e => e.id), [5, 4, 3, 2, 1]); assert.equal(all.available, true);
+  assert.deepEqual((await f.request('/api/journal?types=death,level')).data.entries.map(e => e.id), [5, 4, 2]);
+  assert.deepEqual((await f.request('/api/journal?types=death&character=id-1')).data.entries.map(e => e.id), [2]);
+  const page = (await f.request('/api/journal?limit=2')).data;
+  assert.deepEqual(page.entries.map(e => e.id), [5, 4]); assert.equal(page.more, true);
+  assert.deepEqual((await f.request('/api/journal?before=4&limit=2')).data.entries.map(e => e.id), [3, 2]);
+  assert.deepEqual((await f.request('/api/journal?after=3')).data.entries.map(e => e.id), [5, 4]);
+  assert.equal((await f.request('/api/journal?types=hack')).status, 400);
+  assert.equal((await f.request('/api/journal?character=../x')).status, 400);
   f.runtime.history = null;
 });
 

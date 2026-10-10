@@ -280,6 +280,25 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .item-stats td{text-align:right;font:13px Consolas,monospace;color:var(--text);padding:5px 0;border-top:1px solid var(--line)}
 .item-grid.equipment{grid-template-columns:repeat(auto-fill,minmax(104px,1fr))}
 
+/* Journal */
+.journal-types{display:flex;flex-wrap:wrap;gap:6px}
+.journal-types button[aria-pressed=true]{background:var(--accent-soft);border-color:var(--line-strong);color:var(--accent)}
+.journal-type span{color:var(--faint)}
+.journal-type.bad span{color:var(--danger)}.journal-type.warn span{color:var(--warn)}.journal-type.good span{color:var(--accent)}.journal-type.info span{color:var(--info)}
+.journal-day{font-size:13px;font-weight:650;color:#c3d0c9;margin:16px 0 6px;text-transform:capitalize}
+.journal-day:first-child{margin-top:0}
+.journal-entries{list-style:none;margin:0;padding:0}
+.journal-entry{display:grid;grid-template-columns:70px 130px 120px minmax(0,1fr);gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:13px}
+.journal-entry time{font:12px Consolas,monospace;color:var(--faint);font-variant-numeric:tabular-nums}
+.journal-badge{font-size:11px;font-weight:600;color:#b9c8bf;white-space:nowrap}
+.journal-badge span{display:inline-block;width:14px;text-align:center}
+.journal-entry.bad .journal-badge{color:var(--danger)}.journal-entry.warn .journal-badge{color:var(--warn)}.journal-entry.good .journal-badge{color:var(--accent)}.journal-entry.info .journal-badge{color:var(--info)}
+.journal-who{font-weight:600;color:var(--text);text-decoration:none;overflow-wrap:anywhere}
+a.journal-who:hover{color:var(--accent)}
+.journal-message{color:#b9c8bf;overflow-wrap:anywhere}
+.journal-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px}
+.journal-footer .fine{margin:0}
+
 /* Stats */
 .range-tabs{display:flex;gap:4px;flex-wrap:wrap}
 .range-tabs button{padding:8px 12px;font-size:12px}
@@ -419,6 +438,8 @@ dialog .storage-actions .primary{width:auto}
   .surface{padding:16px}
   .log-line{grid-template-columns:auto 1fr}
   .log-line .log-message{grid-column:1/-1}
+  .journal-entry{grid-template-columns:auto auto minmax(0,1fr)}
+  .journal-entry .journal-message{grid-column:1/-1}
   .form-row{grid-template-columns:1fr}
   .map-tools,.map-tools>div{width:100%}
   .map-tools select{width:100%;min-width:0}
