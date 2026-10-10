@@ -1,0 +1,36 @@
+      <section id="view-editor" class="view" aria-labelledby="editor-view-title">
+        <header class="page-head"><div><p class="eyebrow">CODE</p><h1 id="editor-view-title">CODE editor</h1></div></header>
+        <div class="editor-layout">
+          <div class="script-sidebar">
+            <div class="surface">
+              <div class="section-head compact"><h2>Skripty</h2><button id="new-script" class="ghost small-button">+ Nový návrh</button></div>
+              <div id="script-list" class="script-list" role="list"></div>
+            </div>
+            <div class="surface shared-code">
+              <h2>Načíst ze hry</h2>
+              <p class="fine">Postavy spouští CODE uložený v herním slotu, stejně jako prohlížeč. Změny slotu i modulů načtených přes <code>require_code</code>/<code>load_code</code> se načítají automaticky každých 30 sekund.</p>
+              <button id="load-code-slots" class="ghost">Načíst herní sloty</button>
+              <label for="code-slot-picker">Herní CODE slot</label>
+              <select id="code-slot-picker"><option value="">Nejdřív načti sloty</option></select>
+              <button id="import-code-slot" class="ghost" disabled>Načíst a propojit slot</button>
+              <p id="import-target" class="fine"></p>
+            </div>
+          </div>
+          <div class="surface editor-panel">
+            <div id="editing-header" class="editing-header">
+              <div class="editing-title"><p class="eyebrow">UPRAVUJEŠ</p><h2 id="editing-name">Nový návrh</h2></div>
+              <span id="dirty-state" class="state-pill saved">Bez změn</span>
+            </div>
+            <div id="editing-meta" class="editing-meta"></div>
+            <label for="script-name">Název skriptu</label>
+            <input id="script-name" placeholder="např. warrior-farm" maxlength="120">
+            <div class="source-label"><label for="script-source">JavaScript CODE</label><span id="source-stats"></span></div>
+            <textarea id="script-source" spellcheck="false" placeholder="// Sem vlož svůj Adventure Land CODE."></textarea>
+            <div class="editor-footer">
+              <span id="editor-note">Místní návrh. Pro běh ho propoj s herním slotem.</span>
+              <div class="editor-buttons"><button id="delete-script" class="ghost danger" hidden>Smazat skript</button><button id="save-script" class="primary">Uložit skript</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+<!-- dialogs -->

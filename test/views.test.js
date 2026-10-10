@@ -111,8 +111,25 @@ async function fixture(t, upstream) {
   cookie = result.headers.get('set-cookie').split(';')[0];
   t.after(async () => { app.locals.dispose(); await runtime.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
   const image = async endpoint => fetch(origin + endpoint, { headers: { Cookie: cookie } });
-  return { request, image, runtime, gameApi };
+  return { request, image, runtime, gameApi, origin };
 }
+test('each panel page is the shared shell around its own fragment and script', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy']]) {
+    const response = await fetch(f.origin + route);
+    assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
+    const html = await response.text();
+    assert.match(html, /Vlastní mainframe/); assert.match(html, new RegExp(heading));
+    assert.match(html, new RegExp(`<script type="module" src="/js/${page}.js">`));
+    assert.match(html, new RegExp(`data-nav="${page}" aria-current="page"`));
+    assert.equal(html.match(/aria-current="page"/g).length, 1);
+    assert.doesNotMatch(html, /\{\{|<!-- dialogs -->/);
+  }
+  assert.match(await (await fetch(`${f.origin}/`)).text(), /id="transfer-dialog"/);
+  assert.doesNotMatch(await (await fetch(`${f.origin}/map`)).text(), /id="transfer-dialog"/);
+  assert.equal((await fetch(`${f.origin}/js/map.js`)).status, 200);
+  assert.equal((await fetch(`${f.origin}/index.html`)).status, 404);
+});
 test('saved inventories and bank come from the API token without leaking extra fields', async t => {
   const calls = [];
   const f = await fixture(t, async (url, options) => {

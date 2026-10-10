@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}}Adventure Land · Mainframe</title>
+  <link rel="stylesheet" href="/style.css"><script type="module" src="/js/{{page}}.js"></script>
+</head>
+<body data-page="{{page}}">
+  <div id="toast" role="status" hidden></div>
+  <main id="login" class="login">
+    <div class="logo">AL<span>▧</span></div><p class="eyebrow">YOUR SERVER. YOUR ADVENTURE.</p>
+    <h1>Vlastní mainframe.</h1><p class="muted">Postavy online. Kód pod kontrolou.</p>
+    <form id="login-form"><label for="username">Přihlašovací jméno</label><input id="username" name="username" value="admin" autocomplete="username" required maxlength="80"><label for="password">Heslo správce</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="primary" type="submit">Otevřít mainframe <span>→</span></button><p id="login-error" class="error" role="alert"></p></form>
+  </main>
+  <div id="panel" hidden>
+    <aside>
+      <div class="brand"><div class="logo small">AL<span>▧</span></div><div><strong>Mainframe</strong><small>ADVENTURE LAND</small></div></div>
+      <nav class="nav" aria-label="Sekce panelu">
+        <a class="nav-link" href="/" data-nav="overview"><span aria-hidden="true">▦</span> Postavy</a>
+        <a class="nav-link" href="/map" data-nav="map"><span aria-hidden="true">◈</span> Mapa</a>
+        <a class="nav-link" href="/inventory" data-nav="inventory"><span aria-hidden="true">▤</span> Inventáře</a>
+        <a class="nav-link" href="/editor" data-nav="editor"><span aria-hidden="true">⌘</span> CODE editor<em id="nav-dirty" class="nav-dirty" hidden>●</em></a>
+        <a class="nav-link" href="/logs" data-nav="logs"><span aria-hidden="true">≡</span> Logy</a>
+        <button id="open-account" class="nav-link"><span aria-hidden="true">◉</span> Herní účet</button>
+      </nav>
+      <div class="nav-external"><a href="https://adventure.land/" target="_blank" rel="noopener noreferrer">↗ Otevřít hru</a><a href="https://adventure.land/docs" target="_blank" rel="noopener noreferrer">↗ CODE dokumentace</a></div>
+      <div class="aside-bottom"><span><span class="dot"></span> Vlastní server</span><small id="uptime"></small><button id="logout" class="ghost">Odhlásit se</button></div>
+    </aside>
+    <main class="workspace">
+{{content}}
+    </main>
+  </div>
+  <dialog id="account-dialog"><div class="section-head"><h2>Adventure Land účet</h2><button type="button" id="close-account" class="ghost" aria-label="Zavřít">×</button></div><p id="account-dialog-status" class="muted"></p><form id="game-login-form"><label for="game-email">E-mail herního účtu</label><input id="game-email" type="email" autocomplete="username" required maxlength="254"><label for="game-password">Herní heslo</label><input id="game-password" type="password" autocomplete="current-password" required maxlength="1024"><p class="fine">Přihlášení proběhne přes Adventure Land. Heslo se neukládá; získaná relace je na serveru uložena šifrovaně.</p><button class="primary" type="submit">Přihlásit k Adventure Land</button></form><details class="cookie-option"><summary>Steam účet nebo přihlášení pomocí cookie</summary><form id="game-cookie-form"><label for="game-cookie">Hodnota cookie auth z adventure.land</label><input id="game-cookie" type="password" autocomplete="off" required maxlength="4096"><p class="fine">Použij cookie z již přihlášeného herního klientu. Při spuštění postavy aplikace ověří platnost relace.</p><button type="submit" class="ghost">Uložit herní cookie</button></form></details><details id="token-option" class="cookie-option"><summary>API token — Connect an AI / MCP</summary><form id="api-token-form"><label for="api-token">Adventure Land API token</label><input id="api-token" type="password" autocomplete="off" required pattern="mcp_[A-Za-z0-9_-]{43}" maxlength="47"><p class="fine">Token načte seznam postav a herní CODE sloty. Pro běh postav a převody zůstává potřeba herní přihlášení. Token se ukládá šifrovaně.</p><button class="ghost" type="submit">Připojit API token</button></form><button id="disconnect-token" class="ghost danger" hidden>Odpojit API token</button></details><details id="notify-option" class="cookie-option"><summary>Upozornění — Discord / Telegram</summary><p id="notify-status" class="fine"></p><button id="test-notify" class="ghost" disabled>Poslat testovací upozornění</button></details><p id="game-account-error" class="error" role="alert"></p><button id="disconnect-account" class="ghost danger" hidden>Odpojit účet a zastavit postavy</button></dialog>
+{{dialogs}}
+</body>
+</html>

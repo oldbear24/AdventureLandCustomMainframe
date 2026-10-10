@@ -1,0 +1,9 @@
+      <section id="view-inventory" class="view" aria-labelledby="inventory-title">
+        <header class="page-head"><div><p class="eyebrow">INVENTÁŘE</p><h1 id="inventory-title">Inventáře a banka</h1></div><div class="inventory-tools"><label for="inventory-filter">Hledat předmět</label><input id="inventory-filter" type="search" placeholder="např. ring, hpot…" maxlength="64"></div></header>
+        <div class="inventory-layout">
+          <div class="surface"><div class="section-head compact"><h2>Zobrazit</h2></div><div id="inventory-targets" class="inventory-targets" role="list"></div><p class="fine">Běžící postavy se čtou živě. Ostatní postavy a banka se načítají z uloženého stavu účtu přes API token; mohou být o něco starší.</p></div>
+          <div id="inventory-detail" class="surface inventory-detail" aria-live="polite"><div class="empty"><h2>Vyber postavu nebo banku.</h2><p>Uvidíš vybavení, inventář a zlato.</p></div></div>
+        </div>
+      </section>
+<!-- dialogs -->
+  <dialog id="item-dialog"><div class="section-head"><span class="fine">Detail předmětu</span><button type="button" id="close-item" class="ghost" aria-label="Zavřít">×</button></div><div id="item-detail"></div></dialog>

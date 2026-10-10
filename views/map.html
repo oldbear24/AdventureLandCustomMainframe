@@ -1,0 +1,12 @@
+      <section id="view-map" class="view" aria-labelledby="map-title">
+        <header class="page-head"><div><p class="eyebrow">MAPA</p><h1 id="map-title">Živá mapa <span class="live-dot"></span></h1></div><div class="map-tools"><div><label for="map-picker">Mapa</label><select id="map-picker"><option value="">Načítám mapy…</option></select></div><div><label for="map-follow">Kamera</label><select id="map-follow"><option value="">Volný pohled</option></select></div></div></header>
+        <div class="map-layout">
+          <div class="surface map-panel">
+            <div class="map-head"><div><h2 id="map-name">—</h2><p id="map-status" class="fine">Pozice běžících postav se obnovují živě.</p></div><div class="map-zoom"><button id="map-zoom-in" class="ghost small-button" aria-label="Přiblížit">+</button><button id="map-zoom-out" class="ghost small-button" aria-label="Oddálit">−</button><button id="map-fit" class="ghost small-button">Celá mapa</button></div></div>
+            <div id="map-frame" class="map-canvas"><canvas id="map-canvas" role="img" aria-label="Mapa s pozicemi postav"></canvas><div id="map-tip" class="map-tip" hidden></div></div>
+            <div class="map-legend"><span><i class="legend own"></i>Postava v panelu</span><span><i class="legend saved"></i>Poslední uložená pozice</span><span><i class="legend monster"></i>Monstrum poblíž</span><span><i class="legend player"></i>Jiný hráč</span><span><i class="legend npc"></i>NPC</span><span><i class="legend door"></i>Průchod (klikni)</span><span><i class="legend effect-debuff"></i>Debuff</span><span><i class="legend effect-buff"></i>Buff</span></div>
+          </div>
+          <div class="surface map-side"><h2>Kde jsou postavy</h2><div id="map-characters" class="map-characters"></div><h2 class="map-side-title">Poblíž sledované postavy</h2><div id="map-nearby" class="map-nearby"><p class="fine">Vyber v poli Kamera postavu, kterou chceš sledovat.</p></div><h2 class="map-side-title">Průchody</h2><div id="map-doors" class="map-doors"></div></div>
+        </div>
+      </section>
+<!-- dialogs -->

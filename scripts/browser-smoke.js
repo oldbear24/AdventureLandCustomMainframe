@@ -127,13 +127,13 @@ try {
   await page.locator('#account-dialog').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#api-token').inputValue(), '');
   assert.match(await page.locator('#owned-characters').textContent(), /TestWarrior/);
-  await page.locator('[data-view-link=editor]').click();
+  await page.locator('[data-nav=editor]').click();
   await page.locator('#load-code-slots').click();
   await page.locator('#import-code-slot').click();
   await page.waitForFunction(() => document.querySelectorAll('.script-item').length === 1);
   assert.match(await page.locator('#editing-name').textContent(), /Fixture warrior/);
   assert.match(await page.locator('#editing-meta').textContent(), /Herní slot 1/);
-  await page.locator('[data-view-link=overview]').click();
+  await page.locator('[data-nav=overview]').click();
   await page.locator('[data-owned-index="0"]').click();
   assert.equal(await page.locator('#character-name').inputValue(), 'TestWarrior');
   await page.locator('#character-script').selectOption({ label: 'Fixture warrior · slot 1' });
@@ -207,33 +207,50 @@ try {
   assert.equal(await page.locator('#start-all').isDisabled(), true);
   // Live map: own character, nearby monster/player, saved position of another character, doors switch maps.
   await runtime.exclusive(() => runtime.tick());
-  await page.locator('[data-view-link=map]').click();
-  await page.locator('#map-overlay .map-own').waitFor();
-  await page.waitForFunction(() => document.querySelector('#map-overlay .map-saved') && document.querySelector('#map-overlay .map-monster.targeting'));
+  // The card's map link opens the map page following the character.
+  await page.locator('.character-card a[href^="/map?follow="]').click();
+  const mapScene = () => page.evaluate(() => document.getElementById('map-canvas').scene);
+  await page.waitForFunction(() => { const scene = document.getElementById('map-canvas').scene; return scene?.own.length && scene.saved.length && scene.nearby.some(e => e.kind === 'monster' && e.target); });
   assert.match(await page.locator('#map-name').textContent(), /Mainland/);
-  assert.equal(await page.locator('#map-overlay .map-player').count(), 1);
-  assert.equal(await page.locator('#map-overlay .map-effect.debuff').count(), 1);
-  assert.match(await page.locator('#map-characters').textContent(), /Cursed/);
-  assert.match(await page.locator('#map-characters').textContent(), /TestWarrior.*SavedMage/s);
-  await page.locator('#map-characters [data-follow]').click();
+  let scene = await mapScene();
+  assert.equal(scene.nearby.filter(e => e.kind === 'character').length, 1);
+  assert.equal(scene.own[0].ring, 'debuff'); assert.equal(scene.own[0].name, 'TestWarrior');
+  assert.equal(scene.saved[0].name, 'SavedMage');
+  await page.waitForFunction(() => /TestWarrior.*Cursed.*SavedMage/s.test(document.querySelector('#map-characters').textContent));
   await page.waitForFunction(() => document.querySelector('#map-nearby').textContent.includes('goo'));
+  await page.locator('#map-follow').selectOption('');
+  await page.locator('#map-characters [data-follow]').click();
+  assert.equal(await page.locator('#map-follow').inputValue(), store.snapshot().characters[0].id);
+  assert.match(page.url(), /\/map\?follow=/);
   await page.evaluate(() => { document.getElementById('toast').hidden = true; });
   await page.screenshot({ path: 'test-results/map-desktop.png', fullPage: true });
   // Real time: a move in the game page reaches the map over the WebSocket without a dashboard tick.
   await page.waitForFunction(() => document.querySelector('#map-status').textContent.includes('WebSocket'));
   await gamePage.evaluate(() => { window.character.x = 137; window.character.y = -41; });
-  await page.waitForFunction(() => document.querySelector('#map-overlay .map-own circle')?.getAttribute('cx') === '137', null, { timeout: 3000 });
-  assert.equal(await page.locator('#map-overlay .map-own circle').getAttribute('cy'), '-41');
+  await page.waitForFunction(() => document.getElementById('map-canvas').scene.own[0]?.x === 137, null, { timeout: 3000 });
+  scene = await mapScene(); assert.equal(scene.own[0].y, -41);
+  // Clicking a door drawn on the canvas switches to the neighbouring map.
   await page.locator('#map-fit').click();
-  await page.locator('#map-overlay [data-door=bank]').click();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const door = await page.waitForFunction(() => document.getElementById('map-canvas').hits?.find(h => h.type === 'door' && h.to === 'bank')).then(handle => handle.jsonValue());
+  const canvasBox = await page.locator('#map-canvas').boundingBox();
+  await page.mouse.click(canvasBox.x + door.x + door.w / 2, canvasBox.y + door.y + door.h / 2);
+  await page.waitForFunction(() => document.querySelector('#map-name').textContent === 'The Bank');
+  assert.match(page.url(), /\/map\?map=bank/);
+  await page.locator('#map-picker').selectOption('main');
+  await page.locator('#map-doors [data-door=bank]').click();
   await page.waitForFunction(() => document.querySelector('#map-name').textContent === 'The Bank');
   // Logs arrive over the same WebSocket; the dashboard poll leaves them out while it is connected.
-  await page.locator('[data-view-link=logs]').click();
+  // Old single-page addresses lead to the new pages.
+  await page.goto(`${origin}/#logs`); await page.waitForURL(`${origin}/logs`);
   await page.waitForFunction(() => document.querySelector('#logs-mode').textContent.includes('WebSocket'));
+  await page.goto(`${origin}/logs?character=${store.snapshot().characters[0].id}`);
+  await page.waitForFunction(() => document.querySelector('#logs-mode').textContent.includes('WebSocket'));
+  assert.equal(await page.locator('#log-filter').inputValue(), store.snapshot().characters[0].id);
   await gamePage.evaluate(() => console.log('live log line'));
   await page.waitForFunction(() => document.querySelector('#logs').textContent.includes('live log line'), null, { timeout: 3000 });
   // Inventories: running character live, other account character and bank from the saved snapshot.
-  await page.locator('[data-view-link=inventory]').click();
+  await page.locator('[data-nav=inventory]').click();
   await page.locator('[data-inventory=TestWarrior]').click();
   await page.waitForFunction(() => document.querySelector('#inventory-detail').textContent.includes('Health Potion'));
   assert.match(await page.locator('#inventory-detail').textContent(), /Živě/);
@@ -261,12 +278,12 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   await page.screenshot({ path: 'test-results/bank-mobile.png', fullPage: true });
-  await page.locator('[data-view-link=map]').click();
+  await page.locator('[data-nav=map]').click();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   await page.screenshot({ path: 'test-results/map-mobile.png', fullPage: true });
   // Values saved by CODE set() live in the game page's localStorage under "cstore_".
   await gamePage.evaluate(() => { localStorage.setItem('cstore_farm_state', JSON.stringify({ map: 'main', kills: 12 })); localStorage.setItem('cstore_leader', '"TestWarrior"'); localStorage.setItem('game_setting', 'hidden'); });
-  await page.locator('[data-view-link=overview]').click();
+  await page.locator('[data-nav=overview]').click();
   await page.locator('[data-action=storage]').click();
   await page.locator('#storage-dialog').waitFor({ state: 'visible' });
   assert.equal(await page.locator('.storage-entry').count(), 2);
@@ -312,7 +329,7 @@ try {
   await page.locator('#close-storage').click();
   await page.setViewportSize({ width: 1440, height: 1100 });
   const scriptId = store.snapshot().scripts[0].id;
-  await page.locator('[data-view-link=editor]').click();
+  await page.locator('[data-nav=editor]').click();
   await page.locator(`.script-item[data-script-id="${scriptId}"]`).click();
   await page.waitForFunction(() => document.querySelector('#script-source').value.includes('saved in game browser'));
   await page.locator('#script-source').fill('game_log("reloaded fixture");');
@@ -324,7 +341,7 @@ try {
   assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   assert.match(await page.locator('#dirty-state').textContent(), /Bez změn/);
   await page.screenshot({ path: 'test-results/editor-desktop.png', fullPage: true });
-  await page.locator('[data-view-link=overview]').click();
+  await page.locator('[data-nav=overview]').click();
   await page.locator('[data-action=reload]').click();
   await page.waitForFunction(() => document.querySelector('[data-action=reload]').disabled === false);
   assert.ok(runtime.logs.some(l => l.message.includes('reloaded fixture')));

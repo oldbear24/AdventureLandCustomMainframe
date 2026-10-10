@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -9,6 +10,15 @@ import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
+const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
+// Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
+const PAGES = { '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '] };
+async function renderPage(page, title) {
+  const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
+  const [content, dialogs = ''] = fragment.split('<!-- dialogs -->');
+  return shell.replace(`data-nav="${page}"`, `data-nav="${page}" aria-current="page"`)
+    .replace('{{title}}', title).replaceAll('{{page}}', page).replace('{{content}}', () => content.trimEnd()).replace('{{dialogs}}', () => dialogs.trim());
+}
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
@@ -354,8 +364,8 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     }); res.json({ ok: true });
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint neexistuje.' }));
-  app.use(express.static(publicDir));
-  app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+  for (const [route, [page, title]] of Object.entries(PAGES)) app.get(route, async (_req, res) => res.type('html').set('Cache-Control', 'no-cache').send(await renderPage(page, title)));
+  app.use(express.static(publicDir, { index: false }));
   app.use((error, _req, res, _next) => {
     if (error instanceof z.ZodError) return res.status(400).json({ error: 'Neplatné údaje.', issues: error.issues.map(i => ({ field: i.path.join('.'), message: i.message })) });
     const status = error.status || 500;
