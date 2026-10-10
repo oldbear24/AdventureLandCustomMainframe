@@ -54,6 +54,27 @@ function skillsBlock(c, session) {
   const base = Date.parse(session.state.observedAt) + clockOffset, key = `skills:${c.id}`;
   return `<details class="card-more" data-key="${key}" ${openDetails.has(key) ? 'open' : ''}><summary>Cooldowny skillů <small>${skills.filter(s => s.ms > 0).length}/${skills.length} čeká</small></summary><div class="skill-list">${skills.map(s => `<div class="skill"><span title="${escape(s.key)}">${escape(s.name)}</span><b data-ready-at="${base + s.ms}">${s.ms > 0 ? `${(s.ms / 1000).toFixed(1)} s` : 'připraveno'}</b>${s.cooldown ? `<small>CD ${(s.cooldown / 1000).toFixed(s.cooldown < 10_000 ? 1 : 0)} s</small>` : ''}</div>`).join('')}</div></details>`;
 }
+// Character sprites are layers of the game's sheets, proxied by the panel; each look is fetched once and kept.
+// Without a known look or class (or until the sprite loads) the avatar shows the name's first letter.
+const sprites = new Map();
+function avatar(c, state) {
+  const look = app.dashboard.looks?.[c.id], ctype = state?.ctype || app.owned.find(o => o.name.toLowerCase() === c.name.toLowerCase())?.class;
+  const params = new URLSearchParams();
+  if (look) {
+    params.set('skin', look.skin);
+    const cx = Object.entries(look.cx || {}).map(([place, id]) => `${place}:${id}`).join(',');
+    if (cx) params.set('cx', cx);
+  }
+  if (ctype) params.set('class', ctype);
+  const query = params.toString(), sprite = query ? sprites.get(query) : null;
+  if (query && sprite === undefined) {
+    sprites.set(query, null);
+    api(`/character-sprites?${query}`).then(result => { sprites.set(query, result); render(); }, () => sprites.set(query, false));
+  }
+  if (!sprite) return `<div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div>`;
+  const layers = sprite.layers.map(l => `<span style="left:${l.left}px;bottom:${l.bottom}px;width:${l.width}px;height:${l.height}px;background-image:url('/api/sprite-sheets/${encodeURIComponent(l.sheet)}');background-position:${l.imageX}px ${l.imageY}px;background-size:${l.imageWidth}px ${l.imageHeight}px"></span>`).join('');
+  return `<div class="avatar sprite${state?.rip ? ' dead' : ''}" aria-hidden="true"><div style="width:${sprite.width}px;height:${sprite.height}px">${layers}</div></div>`;
+}
 function characterCard(c, session) {
   const { dashboard } = app;
   const state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
@@ -72,7 +93,7 @@ function characterCard(c, session) {
   const supplies = state ? `<div class="details supplies"><span title="Lektvary HP / MP v inventáři" class="${alerts.some(a => a.type === 'potions') ? 'warn' : ''}">⚗ HP ${number(state.potions?.hp)} · MP ${number(state.potions?.mp)}</span><span title="Volná místa v inventáři">▤ volno ${number(state.esize)}${state.isize ? ` / ${number(state.isize)}` : ''}</span>${state.party ? `<span title="Party">⚑ ${escape(state.party.leader)}</span>` : ''}</div>` : '';
   const running = status === 'running';
   return `<article class="character-card ${running ? 'is-running' : ''} ${alerts.length ? 'has-alert' : ''}">
-    <div class="card-head"><div class="character-title"><div class="avatar">${escape(c.name.slice(0, 1).toUpperCase())}</div><div><h3>${escape(c.name)}</h3><small>${escape(c.region)} ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${labels[status]}</span></div>
+    <div class="card-head"><div class="character-title">${avatar(c, state)}<div><h3>${escape(c.name)}</h3><small>${escape(c.region)} ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${labels[status]}</span></div>
     ${alerts.length ? `<ul class="card-alerts" role="alert">${alerts.map(a => `<li class="alert-${a.type}"><b>${alertLabels[a.type] || a.type}</b>${escape(a.message)}</li>`).join('')}</ul>` : ''}
     <div class="meters"><div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div></div><div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div></div>${xp}</div>
     ${conditionChips(state)}
@@ -80,7 +101,7 @@ function characterCard(c, session) {
     ${supplies}${statsBlock(session)}
     ${codeBox}${error ? `<p class="card-error">${escape(error)}</p>` : ''}
     ${skillsBlock(c, session)}
-    <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || !running ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || !running || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><a class="button ghost" href="/inventory?name=${encodeURIComponent(c.name)}">Inventář</a><button class="ghost" data-action="storage" data-id="${c.id}" ${!running ? 'disabled' : ''} title="Hodnoty uložené CODE funkcí set()">Úložiště</button>${running ? `<a class="button ghost" href="/map?follow=${encodeURIComponent(c.id)}">Mapa</a>` : '<button class="ghost" disabled>Mapa</button>'}<a class="button ghost" href="/logs?character=${encodeURIComponent(c.id)}">Logy</a><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
+    <div class="actions"><button class="${session ? 'ghost' : 'primary'}" data-action="${session ? 'stop' : 'start'}" data-id="${c.id}" ${busy || (!session && !dashboard.config.authConfigured) ? 'disabled' : ''}>${busy ? 'Pracuji…' : session ? '■ Stop' : '▶ Start'}</button><button class="ghost" data-action="reload" data-id="${c.id}" ${busy || !running ? 'disabled' : ''} title="Znovu načíst CODE ze slotu">↻ CODE</button><button class="ghost" data-action="transfer" data-id="${c.id}" ${busy || !running || !state?.codeRunning ? 'disabled' : ''}>Poslat</button><a class="button ghost" href="/automation?character=${encodeURIComponent(c.id)}" title="Cíl farmení, moduly CODE a co postava právě dělá">Automatizace</a><a class="button ghost" href="/inventory?name=${encodeURIComponent(c.name)}">Inventář</a><button class="ghost" data-action="storage" data-id="${c.id}" ${!running ? 'disabled' : ''} title="Hodnoty uložené CODE funkcí set()">Úložiště</button>${running ? `<a class="button ghost" href="/map?follow=${encodeURIComponent(c.id)}">Mapa</a>` : '<button class="ghost" disabled>Mapa</button>'}<a class="button ghost" href="/logs?character=${encodeURIComponent(c.id)}">Logy</a><span class="spacer"></span><button class="ghost" data-action="edit" data-id="${c.id}" ${busy || session ? 'disabled' : ''} title="${session ? 'Nastavení lze měnit po zastavení' : 'Upravit nastavení postavy'}">Nastavení</button><button class="ghost danger" data-action="delete" data-id="${c.id}" ${busy || session ? 'disabled' : ''}>Smazat</button></div>
   </article>`;
 }
 // Party overview: parties of running characters, servers and distances between own characters.

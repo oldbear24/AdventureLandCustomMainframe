@@ -25,6 +25,12 @@ export function partyView(raw) {
     name: m.name, ctype: label(m.ctype, 24), level: num(m.level), map: typeof m.map === 'string' && KEY.test(m.map) ? m.map : null, x: num(m.x), y: num(m.y),
   }));
   return { leader: raw.leader, members };
+}// The character's skin and cosmetics (character.skin, character.cx) for its sprite on the dashboard.
+export function lookView(raw) {
+  if (!raw || !KEY.test(raw.skin)) return null;
+  const cx = {};
+  if (raw.cx && typeof raw.cx === 'object') for (const [place, id] of Object.entries(raw.cx).slice(0, 16)) if (/^[a-z]{1,16}$/.test(place) && typeof id === 'string' && KEY.test(id)) cx[place] = id;
+  return { skin: raw.skin, cx };
 }
 export function extrasView(raw) {
   const potions = raw?.potions || {};
@@ -32,7 +38,7 @@ export function extrasView(raw) {
     max_xp: num(raw?.max_xp), esize: num(raw?.esize), isize: num(raw?.isize),
     potions: { hp: Math.max(0, num(potions.hp) ?? 0), mp: Math.max(0, num(potions.mp) ?? 0) },
     conditions: conditionsView(raw?.conditions), skills: skillsView(raw?.skills), party: partyView(raw?.party),
-    lastSkillAt: num(raw?.lastSkillAt),
+    lastSkillAt: num(raw?.lastSkillAt), look: lookView(raw?.look),
   };
 }
 

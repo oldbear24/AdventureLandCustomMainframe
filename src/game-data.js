@@ -67,6 +67,104 @@ function iconOf(G, sheets, key, item) {
   return { sheet, x: column * set.size, y: row * set.size, size: set.size, width: set.columns * set.size, height: set.rows * set.size };
 }
 
+// Character sprite sheets (G.sprites) cut like the game's precompute_image_positions (html.js): a body cell holds
+// 3 frames × 4 directions, heads, hair and hats hold one frame per direction.
+const ONE_FRAME = ['v_animation', 'head', 'hair', 'hat', 's_wings', 'face', 'makeup', 'beard'];
+const CX_SLOTS = { armor: 'skin', body: 'skin', character: 'skin', face: 'face', makeup: 'makeup', a_makeup: 'makeup', beard: 'chin', mask: 'chin', tail: 'tail', s_wings: 'back', wings: 'back', hat: 'hat', a_hat: 'hat', head: 'head', hair: 'hair', gravestone: 'gravestone' };
+export const LOOK_KEY = /^[a-zA-Z0-9_]{1,40}$/;
+const amount = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+function spriteIndex(G) {
+  const sprites = {}, spriteSheets = {};
+  for (const [key, def] of Object.entries(G.sprites || {})) {
+    if (!SHEET.test(key) || !def || def.skip || typeof def.file !== 'string' || !SHEET_FILE.test(def.file) || def.file.includes('..') || !Array.isArray(def.matrix)) continue;
+    const columns = finite(def.columns), rows = finite(def.rows), image = G.images?.[def.file.split('?')[0]];
+    const width = finite(image?.width) || finite(def.width) || 312, height = finite(image?.height) || finite(def.height) || 288;
+    if (!(columns > 0 && columns <= 64 && rows > 0 && rows <= 64 && width <= 4096 && height <= 4096)) continue;
+    const type = typeof def.type === 'string' ? def.type : 'full';
+    let rowFrames = 4, columnFrames = 3;
+    if (type === 'animation') rowFrames = 1;
+    if (type === 'tail') columnFrames = 4;
+    if (ONE_FRAME.includes(type)) columnFrames = 1;
+    if (['a_makeup', 'a_hat'].includes(type)) columnFrames = finite(def.frames) || 3;
+    if (type === 'head' && finite(def.frames) > 0) columnFrames = finite(def.frames);
+    if (['emblem', 'gravestone'].includes(type)) rowFrames = columnFrames = 1;
+    spriteSheets[key] = { file: def.file };
+    def.matrix.forEach((row, i) => (Array.isArray(row) ? row : []).forEach((name, j) => {
+      if (typeof name !== 'string' || !LOOK_KEY.test(name)) return;
+      const size = typeof def.size === 'string' ? def.size : 'normal';
+      sprites[name] = {
+        sheet: key, sheetWidth: width, sheetHeight: height, x: j * width / columns + amount(G.dimensions?.[name]?.[2]), y: i * height / rows,
+        width: width / (columns * columnFrames), height: height / (rows * rowFrames), columnFrames, type,
+        size, sizeUpper: size + (G.cosmetics?.prop?.[name]?.includes?.('slender') ? 'slender' : ''),
+      };
+    }));
+  }
+  return { sprites, spriteSheets };
+}
+// One layer of a character, as the game's sprite_image places it: a cropped frame anchored to the bottom of the box.
+function spriteLayer(G, sprites, name, args) {
+  if (!Object.hasOwn(sprites, name)) name = 'naked';
+  const s = sprites[name];
+  if (!s) return null;
+  const scale = args.scale, rheight = args.rheight || 0, p = args.p || 0, dims = G.dimensions?.[name];
+  const width = Array.isArray(dims) ? amount(dims[0]) : s.width, height = Array.isArray(dims) ? amount(dims[1]) : s.height;
+  const left = (args.cwidth - width * scale) / 2 + (args.x || 0) * scale, frameShift = s.columnFrames === 1 ? width : 0;
+  return {
+    sheet: s.sheet, left, bottom: (p + rheight) * scale, width: width * scale, height: (height - rheight) * scale,
+    imageX: (-s.x - s.width + frameShift - (s.width - width + (args.xDisp || 0)) / 2) * scale, imageY: (-s.y - s.height + height) * scale,
+    imageWidth: s.sheetWidth * scale, imageHeight: s.sheetHeight * scale,
+  };
+}
+// The game's html.js sprite(): a body (full sprite, armor or body) with skin, head, hair, face, beard, hat and back cosmetics, facing down.
+function characterLayers(G, sprites, look, box) {
+  let name = look.skin;
+  if (!Object.hasOwn(sprites, name)) return null;
+  const C = G.cosmetics || {}, T = n => Object.hasOwn(sprites, n) ? sprites[n].type : undefined;
+  const cx = {};
+  for (const [place, id] of Object.entries(look.cx || {})) {
+    if (!id || !Object.hasOwn(sprites, id)) continue;
+    if (place === 'upper' ? !['body', 'armor'].includes(T(id)) : CX_SLOTS[T(id)] !== place) continue;
+    cx[place] = id;
+  }
+  const s = sprites[name], props = new Set();
+  for (const id of [name, ...Object.values(cx)]) for (const p of Array.isArray(C.prop?.[id]) ? C.prop[id] : []) props.add(p);
+  const bodyType = ['armor', 'body', 'character'].includes(s.type) ? s.type : 'full';
+  if (bodyType !== 'full' && bodyType !== 'character') cx.head ||= 'makeup117';
+  else { delete cx.head; delete cx.hair; }
+  if (props.has('no_hair')) delete cx.hair;
+  if (cx.upper && (bodyType === 'full' || bodyType === 'character' || T(cx.upper) !== 'armor' || sprites[cx.upper].sizeUpper !== s.sizeUpper)) delete cx.upper;
+  if (cx.hat && props.has('no_hat')) delete cx.hat;
+  const headDy = { large: 2, tall: 1, normal: 0, small: -1, xsmall: -3, xxsmall: -4 }[s.size] ?? 0;
+  const cosmeticHeadY = amount(C.head_y?.[name]);
+  const headDh = amount(C.head?.[cx.head]?.[3]);
+  const headY = amount(C.default_head_place) - cosmeticHeadY + headDy;
+  const hairY = amount(C.default_hair_place) - cosmeticHeadY + amount(C.hair?.[cx.hair]?.[0]) + headDh + headDy;
+  const hatY = amount(C.default_hat_place) - cosmeticHeadY + amount(C.hair?.[cx.hair]?.[1]) + headDy + amount(C.hat?.[cx.hat]) + headDh;
+  let skin = null;
+  if (cx.head && bodyType === 'armor') {
+    const heads = Array.isArray(C.head?.[cx.head]) ? C.head[cx.head] : [];
+    skin = { small: heads[0] || 'sskin1a', normal: heads[1] || 'mskin1a', tall: heads[1] || 'mskin1a', large: heads[2] || 'lskin1a' }[s.size] || null;
+  }
+  const xDisp = s.width % 2 ? 0 : -0.5, base = { cwidth: box.width, scale: box.scale };
+  const rxDisp = Array.isArray(G.dimensions?.[name]) && G.dimensions[name][3] ? -amount(G.dimensions[name][3]) * box.scale : 0;
+  const hiddenHead = !!C.prop?.[name]?.includes?.('covers');
+  const layers = [];
+  const add = (id, args) => { if (id) { const layer = spriteLayer(G, sprites, id, { ...base, ...args }); if (layer) layers.push(layer); } };
+  if (cx.head && hiddenHead) add(cx.head, { x: xDisp, p: headY });
+  if (cx.back) add(cx.back, { x: xDisp + (T(cx.back) === 'wings' ? -2.5 : 0) });
+  if (skin) add(skin, {});
+  add(name, { xDisp: rxDisp + xDisp });
+  if (cx.upper) add(cx.upper, { rheight: 8 });
+  if (cx.head && !hiddenHead) add(cx.head, { x: xDisp, p: headY });
+  if (cx.hair) add(cx.hair, { x: xDisp, p: hairY });
+  if (cx.face) add(cx.face, { x: xDisp, p: headY + amount(C.default_face_position) });
+  if (cx.chin) add(cx.chin, { x: xDisp, p: headY + amount(C.default_beard_position) });
+  if (cx.tail) add(cx.tail, { p: 0 });
+  if (cx.hat) add(cx.hat, { x: xDisp, p: hatY });
+  if (cx.makeup) add(cx.makeup, { x: xDisp, p: headY + amount(C.default_makeup_position) });
+  return layers.length ? { width: box.width, height: box.height, layers } : null;
+}
+
 // Passive item abilities the game client names itself (html.js render_item); they are not in G.skills.
 const ITEM_ABILITIES = {
   bash: 'Bash', freeze: 'Freeze', poison: 'Poison', burn: 'Burn', weave: 'Weave', secondchance: 'Second Chance', sugarrush: 'Sugar Rush', charm: 'Charm',
@@ -126,7 +224,7 @@ function monsterTable(G, items) {
 // Public game definitions (data.js) give map geometry and item names without any running character.
 export class GameData {
   constructor(request = fetch) {
-    this.request = request; this.data = null; this.loadedAt = 0; this.loading = null; this.maps = new Map(); this.sheets = new Map();
+    this.request = request; this.data = null; this.loadedAt = 0; this.loading = null; this.maps = new Map(); this.sheets = new Map(); this.looks = new Map();
   }
   async fetchData() {
     let body;
@@ -150,12 +248,14 @@ export class GameData {
     const eventKeys = new Set([...BOSSES, ...EVENTS, ...Object.keys(G.events || {}).filter(key => /^[a-z0-9_]{1,32}$/.test(key) && !G.events[key]?.disabled && key !== 'dreams')]);
     const events = [...eventKeys].map(key => ({ key, title: text(G.events?.[key]?.name, text(G.monsters?.[key]?.name, key)), kind: BOSSES.includes(key) ? 'boss' : 'event' }))
       .sort((a, b) => (a.kind === 'boss' ? 0 : 1) - (b.kind === 'boss' ? 0 : 1) || a.title.localeCompare(b.title));
-    return { G, items, maps, sheets, events, monsters: monsterTable(G, items), version: finite(G.version) };
+    const monsters = Object.entries(G.monsters || {}).filter(([key, monster]) => ITEM_NAME.test(key) && monster && typeof monster === 'object')
+      .map(([key, monster]) => ({ key, name: text(monster.name, key) }));
+    return { G, items, maps, sheets, monsters, events, farming: monsterTable(G, items), ...spriteIndex(G), version: finite(G.version) };
   }
   // Refreshes at most every 6 hours; a failed refresh keeps serving the previous copy.
   async load() {
     if (this.data && Date.now() - this.loadedAt < REFRESH) return this.data;
-    this.loading ||= this.fetchData().then(data => { this.data = data; this.loadedAt = Date.now(); this.maps.clear(); return data; })
+    this.loading ||= this.fetchData().then(data => { this.data = data; this.loadedAt = Date.now(); this.maps.clear(); this.looks.clear(); return data; })
       .catch(error => { if (this.data) { this.loadedAt = Date.now() - REFRESH + 10 * 60_000; return this.data; } throw error; })
       .finally(() => { this.loading = null; });
     return this.loading;
@@ -172,17 +272,36 @@ export class GameData {
     }
     return this.maps.get(name);
   }
-  // Icon sheets are fetched once per file version and kept in memory; a failed download is retried on the next request.
-  async sheet(name) {
+  // Icon and character sheets are fetched once per file version and kept in memory; a failed download is retried on the next request.
+  async sheet(name, kind = 'items') {
     if (!SHEET.test(name)) throw failure(400, 'Neplatný název obrázků.');
-    const data = await this.load();
-    const set = Object.hasOwn(data.sheets, name) ? data.sheets[name] : null;
-    if (!set) throw failure(404, 'Obrázky předmětů neexistují.');
-    const cached = this.sheets.get(name);
+    const data = await this.load(), list = kind === 'sprites' ? data.spriteSheets : data.sheets;
+    const set = Object.hasOwn(list, name) ? list[name] : null;
+    if (!set) throw failure(404, kind === 'sprites' ? 'Obrázky postav neexistují.' : 'Obrázky předmětů neexistují.');
+    const key = `${kind}:${name}`, cached = this.sheets.get(key);
     if (cached?.file === set.file) return cached.body;
-    const body = this.fetchSheet(set.file).catch(error => { if (this.sheets.get(name)?.body === body) this.sheets.delete(name); throw error; });
-    this.sheets.set(name, { file: set.file, body });
+    const body = this.fetchSheet(set.file).catch(error => { if (this.sheets.get(key)?.body === body) this.sheets.delete(key); throw error; });
+    this.sheets.set(key, { file: set.file, body });
     return body;
+  }
+  spriteSheet(name) { return this.sheet(name, 'sprites'); }
+  // Layers drawing a character the way the game's character windows do; without a known look the class's default one.
+  async characterSprite({ skin, cx, ctype } = {}) {
+    const data = await this.load();
+    let look = typeof skin === 'string' && LOOK_KEY.test(skin) ? { skin, cx: cx && typeof cx === 'object' ? cx : {} } : null;
+    if (!look) {
+      const preset = typeof ctype === 'string' && Object.hasOwn(data.G.classes || {}, ctype) ? data.G.classes[ctype]?.looks?.[0] : null;
+      if (!Array.isArray(preset) || typeof preset[0] !== 'string') throw failure(404, 'Vzhled postavy není známý.');
+      look = { skin: preset[0], cx: preset[1] && typeof preset[1] === 'object' ? preset[1] : {} };
+    }
+    const key = JSON.stringify([look.skin, Object.entries(look.cx).filter(([place, id]) => typeof id === 'string').sort()]);
+    if (!this.looks.has(key)) {
+      if (this.looks.size >= 200) this.looks.clear();
+      this.looks.set(key, characterLayers(data.G, data.sprites, look, { width: 40, height: 50, scale: 1.5 }));
+    }
+    const sprite = this.looks.get(key);
+    if (!sprite) throw failure(404, 'Vzhled postavy není známý.');
+    return sprite;
   }
   async fetchSheet(file) {
     let body;
@@ -194,8 +313,12 @@ export class GameData {
     if (body.length > MAX_SHEET_SIZE || !body.subarray(0, 8).equals(PNG)) throw failure(502, 'Obrázky předmětů mají neočekávaný formát.');
     return body;
   }
+  async targets() {
+    const data = await this.load();
+    return { items: Object.entries(data.items).map(([key, item]) => ({ key, name: item.name })), monsters: data.monsters };
+  }
   async eventCatalog() { return (await this.load()).events; }
-  async monsters() { const data = await this.load(); return { version: data.version, monsters: data.monsters }; }
+  async monsters() { const data = await this.load(); return { version: data.version, monsters: data.farming }; }
   // Display names are optional: an unreachable data.js must not hide an inventory.
   async itemNames() {
     try { return (await this.load()).items; } catch { return {}; }

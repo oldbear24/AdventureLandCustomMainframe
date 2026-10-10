@@ -41,6 +41,8 @@ test('extras from the game page are whitelisted', () => {
   assert.deepEqual(view.skills, [{ key: 'supershot', name: 'Super Shot', ms: 0, cooldown: 30000 }]);
   assert.deepEqual(view.party, { leader: 'Leader', members: [{ name: 'Leader', ctype: 'priest', level: 60, map: 'main', x: 1, y: 2 }] });
   assert.equal(extrasView({ party: { leader: 'x y' } }).party, null);
+  assert.deepEqual(extrasView({ look: { skin: 'marmor12a', cx: { head: 'makeup117', hair: '<b>', __proto__: 'x', Upper: 'mbody1a', hat: 7 }, auth: 'x' } }).look, { skin: 'marmor12a', cx: { head: 'makeup117' } });
+  assert.equal(extrasView({ look: { skin: '../x' } }).look, null);
 });
 test('activity and alerts cover death, idling, reconnects, potions and paused CODE', () => {
   const base = { x: 0, y: 0, xp: 1, gold: 1, level: 1, target: null, map: 'main', lastSkillAt: 10 };

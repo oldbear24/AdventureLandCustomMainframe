@@ -31,6 +31,16 @@ const G = {
   imagesets: { pack_20: { size: 20, rows: 4, columns: 8, file: '/images/tiles/items/pack_20vt8.png' }, pack_1a: { size: 16, rows: 2, columns: 2, file: '/images/tiles/items/pack_1a.png?v=11' }, evil: { size: 20, rows: 1, columns: 1, file: 'https://example.com/x.png' }, sneaky: { size: 20, rows: 1, columns: 1, file: '/images/../secret.png' } },
   titles: { lucky: { type: 'all_items', luck: 2, title: 'Lucky' } }, sets: {}, skills: {},
   positions: { hpot0: ['', 4, 2], ring: ['pack_1a', 1, 1], outside: ['', 8, 0] },
+  sprites: {
+    chara7: { file: '/images/tiles/characters/chara7.png', columns: 4, rows: 2, matrix: [['fmage', null, null, null], [null, null, null, null]] },
+    marmor12: { file: '/images/cosmetics/armors/marmor12.png?v=2', type: 'armor', columns: 4, rows: 2, matrix: [['marmor12a', 'marmor12b', 'marmor12c', 'marmor12d'], [null, null, null, null]] },
+    mskin1: { file: '/images/cosmetics/skins/mskin1.png', type: 'skin', columns: 1, rows: 1, matrix: [['mskin1a']] },
+    makeup1: { file: '/images/cosmetics/makeup/makeup1.png', type: 'head', columns: 2, rows: 1, matrix: [['makeup117', 'makeup105']] },
+    evil: { file: 'https://evil.example/x.png', columns: 1, rows: 1, matrix: [['evilskin']] },
+  },
+  images: { '/images/tiles/characters/chara7.png': { width: 312, height: 288 }, '/images/cosmetics/armors/marmor12.png': { width: 324, height: 288 }, '/images/cosmetics/skins/mskin1.png': { width: 81, height: 144 }, '/images/cosmetics/makeup/makeup1.png': { width: 54, height: 120 } },
+  dimensions: {}, classes: { merchant: { looks: [['marmor12a', { head: 'makeup105', hat: 'nohat' }]] } },
+  cosmetics: { default_head_place: 7, default_hair_place: 7, default_hat_place: 7, default_face_position: 7, default_makeup_position: 0, default_beard_position: 0, head: {}, hair: {}, hat: {}, prop: {}, head_y: {} },
 };
 const dataJs = `var G=${JSON.stringify(G)};`;
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fixture image')]);
@@ -80,6 +90,27 @@ test('item icon sheets are fetched once from the game and must be PNG', async ()
   const html = new GameData(serve(Buffer.from('<html>')));
   await assert.rejects(html.sheet('pack_20'), { status: 502 });
 });
+test('character sprites are layered like the game draws them', async () => {
+  const urls = [];
+  const data = new GameData(async url => { urls.push(url); return serve()(url); });
+  // A full sprite is one layer: a 26×36 frame of the 4×2 sheet, facing down, scaled 1.5× into a 40×50 box.
+  assert.deepEqual(await data.characterSprite({ skin: 'fmage', cx: { head: 'makeup117' } }), {
+    width: 40, height: 50, layers: [{ sheet: 'chara7', left: 0.5, bottom: 0, width: 39, height: 54, imageX: -38.625, imageY: 0, imageWidth: 468, imageHeight: 432 }],
+  });
+  // An armor gets the skin of its head below it and the head above; an unknown hat is dropped.
+  const merchant = await data.characterSprite({ ctype: 'merchant' });
+  assert.deepEqual(merchant.layers.map(l => [l.sheet, l.bottom, l.imageX]), [['mskin1', 0, -40.5], ['marmor12', 0, -40.5], ['makeup1', 10.5, -40.5]]);
+  assert.deepEqual(await data.characterSprite({ skin: 'marmor12a', cx: { head: 'makeup105' } }), merchant);
+  // Without a head an armor wears the game's default one.
+  assert.equal((await data.characterSprite({ skin: 'marmor12a', cx: {} })).layers[2].imageX, 0);
+  await assert.rejects(data.characterSprite({ ctype: 'nobody' }), { status: 404 });
+  await assert.rejects(data.characterSprite({ skin: 'evilskin' }), { status: 404 });
+  assert.deepEqual(await data.spriteSheet('marmor12'), png);
+  assert.deepEqual(await data.sheet('pack_1a'), png);
+  assert.deepEqual(urls.slice(1), ['https://adventure.land/images/cosmetics/armors/marmor12.png?v=2', 'https://adventure.land/images/tiles/items/pack_1a.png?v=11']);
+  await assert.rejects(data.spriteSheet('evil'), { status: 404 });
+  await assert.rejects(data.spriteSheet('pack_1a'), { status: 404 });
+});
 test('item details and stats are computed like the game', async () => {
   const names = await new GameData(serve()).itemNames();
   assert.equal(names.helmet.secret, undefined);
@@ -126,7 +157,7 @@ async function fixture(t, upstream) {
 }
 test('each panel page is the shared shell around its own fragment and script', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí'], ['/monsters', 'monsters', 'Kde farmit'], ['/system', 'system', 'Systém']]) {
+  for (const [route, page, heading] of [['/', 'overview', 'Tvoje postavy'], ['/map', 'map', 'Živá mapa'], ['/inventory', 'inventory', 'Inventáře a banka'], ['/editor', 'editor', 'CODE editor'], ['/logs', 'logs', 'Živé logy'], ['/automation', 'automation', 'Co postavy dělají'], ['/events', 'events', 'Bossové a události'], ['/items', 'items', 'Předměty napříč účtem'], ['/stats', 'stats', 'Dlouhodobé statistiky'], ['/journal', 'journal', 'Deník událostí'], ['/monsters', 'monsters', 'Kde farmit'], ['/system', 'system', 'Systém']]) {
     const response = await fetch(f.origin + route);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /text\/html/);
     const html = await response.text();
@@ -177,6 +208,12 @@ test('saved inventories and bank come from the API token without leaking extra f
   assert.equal(sheet.status, 200); assert.equal(sheet.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await sheet.arrayBuffer()), png);
   assert.equal((await f.image('/api/item-sheets/evil')).status, 404);
+  const sprite = await f.request('/api/character-sprites?skin=marmor12a&cx=head:makeup105,hat:nohat');
+  assert.equal(sprite.status, 200); assert.deepEqual(sprite.data.layers.map(l => l.sheet), ['mskin1', 'marmor12', 'makeup1']);
+  assert.equal((await f.request('/api/character-sprites?class=merchant')).data.layers.length, 3);
+  assert.equal((await f.request('/api/character-sprites?class=nobody')).status, 404);
+  assert.equal((await f.request('/api/character-sprites?skin=a&cx=head')).status, 400);
+  assert.equal((await f.image('/api/sprite-sheets/chara7')).headers.get('content-type'), 'image/png');
   assert.equal((await fetch(sheet.url)).status, 401);
 });
 test('a running character is read live, including the bank while inside it', async t => {
@@ -337,6 +374,112 @@ test('values stored by CODE set() can be edited, deleted and cleared', async t =
   assert.deepEqual((await f.request('/api/characters/id-1/storage', 'DELETE', {})).data, { removed: 3 });
   assert.deepEqual([...storage.keys()], ['activity']);
   f.runtime.sessions.clear();
+});
+// A game page whose CODE runner exposes the farming target, module switches, own controls and chat commands.
+function automationPage() {
+  const calls = [];
+  let primary = { target: '', goal: 0 }, combat = true, dungeons = true, mode = 'farm', loot = false;
+  const runner = {
+    adventure_primary: {
+      set: (text, goal) => { calls.push(['primary', text, goal]); if (text === 'unknown') return false; primary = { target: text === 'Spider Silk' ? 'spidersilk' : text, goal: Number(goal) || 0 }; return true; },
+      clear: () => { calls.push(['clear']); primary = { target: '', goal: 0 }; return true; },
+      status: () => ({ ...primary, by: 'Runner', status: primary.target ? 'LOVÍ: Spider' : '', sources: primary.target ? [{ type: 'spider', name: 'Spider', chance: 0.001, map: 'halloween', extra: 'x' }] : [] }),
+    },
+    adventure_team: {
+      setModule: (name, value) => { calls.push(['module', name, value]); combat = value; return true; },
+      setDungeons: value => { calls.push(['dungeons', value]); dungeons = value; return true; },
+      snapshot: () => ({ autonomy: { modules: { combat: { enabled: combat, busy: true, until: 0 }, 'bad key': { enabled: true } } }, expedition: { enabled: dungeons, state: { reason: 'Běžné farmení' } },
+        plan: { current: 'Boj: goo #7', next: 'Dokončit cíl', mode: 'work', leader: 'Runner' }, events: [{ at: 1, kind: 'attack', text: 'Útok na goo', status: 'accepted' }, { bad: true }] }),
+    },
+    mainframe_controls: () => [
+      { key: 'mode', label: 'Režim', type: 'select', options: ['farm', 'home'], get: () => mode, set: value => { calls.push(['mode', value]); mode = value; } },
+      { key: 'loot', label: 'Kořist', type: 'boolean', get: () => loot, set: async value => { loot = value; } },
+      { key: 'module.combat', label: 'Přepsáno CODE', type: 'boolean', get: () => true, set: () => { throw new Error('nope'); } },
+      { key: 'bad key', set: () => true },
+    ],
+    handle_command: (name, args) => { calls.push(['command', name, args]); return name === 'cil' ? true : -1; },
+  };
+  const window = { code_active: true, document: { getElementById: id => id === 'maincode' ? { contentWindow: runner } : null } };
+  const page = { evaluate: async (fn, arg) => {
+    const previous = globalThis.window; globalThis.window = window;
+    try { return await fn(arg); } finally { globalThis.window = previous; }
+  } };
+  return { calls, page, window, runner };
+}
+test('the Automation page lists, sets and remembers what the CODE offers', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  const added = await f.request('/api/characters', 'POST', { name: 'Runner', region: 'EU', server: 'I' });
+  const other = await f.request('/api/characters', 'POST', { name: 'Resting', region: 'EU', server: 'I' });
+  const id = added.data.id, game = automationPage();
+  f.runtime.sessions.set(id, { id, status: 'running', page: game.page, character: { name: 'Runner' } });
+  const listed = (await f.request('/api/automation')).data.characters;
+  assert.deepEqual(listed.map(c => [c.name, c.status, !!c.live]), [['Runner', 'running', true], ['Resting', 'stopped', false]]);
+  const live = listed[0].live;
+  assert.deepEqual(live.controls.map(c => [c.key, c.type, c.group]), [['mode', 'select', 'Nastavení CODE'], ['loot', 'boolean', 'Nastavení CODE'], ['module.combat', 'boolean', 'Nastavení CODE'], ['primary', 'target', 'Farmení celého týmu'], ['dungeons', 'boolean', 'Farmení celého týmu']]);
+  assert.deepEqual(live.activity, { current: 'Boj: goo #7', next: 'Dokončit cíl', mode: 'work', leader: 'Runner', events: [{ at: 1, kind: 'attack', text: 'Útok na goo', status: 'accepted' }] });
+  assert.equal(live.commands, true);
+  assert.deepEqual(live.controls.find(c => c.key === 'dungeons').status, { text: 'Běžné farmení' });
+
+  const set = await f.request(`/api/characters/${id}/controls/primary`, 'PUT', { value: { target: 'Spider Silk', goal: 2 }, remember: true });
+  assert.equal(set.status, 200); assert.deepEqual(set.data.value, { target: 'spidersilk', goal: 2 });
+  assert.deepEqual(game.calls.at(-1), ['primary', 'Spider Silk', 2]);
+  const primary = (await f.request('/api/automation')).data.characters[0];
+  assert.deepEqual(primary.saved, { primary: { target: 'spidersilk', goal: 2 } });
+  assert.deepEqual(primary.live.controls.find(c => c.key === 'primary').status, { text: 'LOVÍ: Spider', by: 'Runner', sources: [{ name: 'Spider', chance: 0.001, map: 'halloween' }] });
+  assert.equal((await f.request(`/api/characters/${id}/controls/primary`, 'PUT', { value: { target: '', goal: 0 } })).status, 200);
+  assert.deepEqual(game.calls.at(-1), ['clear']);
+  assert.deepEqual((await f.request('/api/automation')).data.characters[0].saved, {}, 'setting without remember forgets the saved value');
+
+  assert.equal((await f.request(`/api/characters/${id}/controls/mode`, 'PUT', { value: 'home', remember: true })).status, 200);
+  assert.equal((await f.request(`/api/characters/${id}/controls/loot`, 'PUT', { value: true })).data.value, true);
+  const refused = await f.request(`/api/characters/${id}/controls/primary`, 'PUT', { value: { target: 'unknown', goal: 0 } });
+  assert.equal(refused.status, 422); assert.match(refused.data.error, /odmítl/);
+  const thrown = await f.request(`/api/characters/${id}/controls/module.combat`, 'PUT', { value: false });
+  assert.equal(thrown.status, 422); assert.match(thrown.data.error, /nope/);
+  assert.equal((await f.request(`/api/characters/${id}/controls/mode`, 'PUT', { value: 'party' })).status, 422);
+  assert.equal((await f.request(`/api/characters/${id}/controls/dungeons`, 'PUT', { value: 'yes' })).status, 422);
+  assert.equal((await f.request(`/api/characters/${id}/controls/missing`, 'PUT', { value: 1 })).status, 422);
+  assert.equal((await f.request(`/api/characters/${id}/controls/mode`, 'PUT', { value: { nested: true } })).status, 400);
+  assert.equal((await f.request(`/api/characters/${id}/controls/bad key`, 'PUT', { value: true })).status, 400);
+  assert.equal((await f.request(`/api/characters/${other.data.id}/controls/mode`, 'PUT', { value: 'home' })).status, 409);
+
+  assert.equal((await f.request(`/api/characters/${id}/command`, 'POST', { command: '/cil spidersilk 2' })).status, 200);
+  assert.deepEqual(game.calls.at(-1), ['command', 'cil', 'spidersilk 2']);
+  const unknown = await f.request(`/api/characters/${id}/command`, 'POST', { command: 'nope' });
+  assert.equal(unknown.status, 422); assert.match(unknown.data.error, /nezná/);
+  assert.equal((await f.request(`/api/characters/${id}/command`, 'POST', { command: '/cil\nx' })).status, 400);
+  assert.ok(f.runtime.logs.some(l => l.characterId === id && l.message === 'Automatizace: Režim = home'));
+
+  game.window.code_active = false;
+  assert.match((await f.request('/api/automation')).data.characters[0].error, /CODE postavy neběží/);
+  f.runtime.sessions.clear();
+  // Editing the character keeps its remembered values; forgetting removes them.
+  assert.equal((await f.request(`/api/characters/${id}`, 'PUT', { name: 'Runner', region: 'US', server: 'II' })).status, 200);
+  assert.deepEqual((await f.request('/api/automation')).data.characters[0].saved, { mode: 'home' });
+  assert.deepEqual((await f.request(`/api/characters/${id}/controls/mode`, 'DELETE', {})).data, { removed: true });
+  assert.deepEqual((await f.request(`/api/characters/${id}/controls/mode`, 'DELETE', {})).data, { removed: false });
+  assert.deepEqual((await f.request('/api/automation')).data.characters[0].saved, {});
+  const targets = await f.request('/api/targets');
+  assert.deepEqual(targets.data.monsters, [{ key: 'goo', name: 'Goo' }, { key: 'bee', name: 'Bee' }, { key: 'target', name: 'Target' }, { key: 'broken', name: 'Broken' }]);
+  assert.deepEqual(targets.data.items.find(i => i.key === 'hpot0'), { key: 'hpot0', name: 'Health Potion' });
+});
+test('remembered Automation values are set again once the CODE offers them after a connection', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  const game = automationPage();
+  const session = { id: 'id-1', status: 'running', page: game.page, character: { name: 'Runner' }, pendingControls: { values: { primary: { target: 'bee', goal: 0 }, 'module.combat': false, dungeons: 'bad', later: 3 }, until: Date.now() + 60_000 } };
+  game.runner.mainframe_controls = [];
+  await f.runtime.applySavedControls(session);
+  assert.deepEqual(game.calls, [['primary', 'bee', 0], ['module', 'combat', false]]);
+  assert.deepEqual(session.pendingControls.values, { later: 3 }, 'a missing control waits, a refused one is dropped');
+  assert.ok(f.runtime.logs.some(l => l.message === 'Automatizace po připojení: Hlavní cíl farmení = bee, Boj = vypnuto'));
+  assert.ok(f.runtime.logs.some(l => /Dungeonové výpravy nelze nastavit/.test(l.message)));
+  game.window.code_active = false;
+  await f.runtime.applySavedControls(session);
+  assert.deepEqual(session.pendingControls.values, { later: 3 }, 'stopped CODE keeps waiting');
+  game.window.code_active = true; session.pendingControls.until = Date.now() - 1;
+  await f.runtime.applySavedControls(session);
+  assert.equal(session.pendingControls, null);
+  assert.ok(f.runtime.logs.some(l => /nenabídl later/.test(l.message)));
 });
 test('game state is sanitized before it reaches the panel', () => {
   const state = sanitizeState(JSON.stringify({ name: 'A'.repeat(100), level: 5, x: 1.5, y: 'bad', nearby: [{ kind: 'boss', name: 'goo', x: 1.4, y: 2, target: 1, extra: 'x' }, { x: 'nope' }], secret: 'x' }));
