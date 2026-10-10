@@ -4,3 +4,8 @@ data
 .git
 test-results
 mainframe-backup*.json
+certs
+*.pem
+*.key
+*.p12
+*.pfx

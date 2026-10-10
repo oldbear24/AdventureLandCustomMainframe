@@ -7,7 +7,7 @@ async function api(url, method = 'GET', body) {
   const response = await fetch(`/api${url}`, { method, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && url !== '/login') { active = false; $('panel').hidden = true; $('login').hidden = false; }
+    if (response.status === 401 && data.code === 'SESSION_REQUIRED') { active = false; $('panel').hidden = true; $('login').hidden = false; $('account-dialog').close(); $('game-password').value = ''; $('game-cookie').value = ''; }
     throw new Error(data.error + (data.issues ? ` ${data.issues.map(i => `${i.field}: ${i.message}`).join(', ')}` : ''));
   }
   return data;
@@ -26,6 +26,12 @@ function render() {
   $('uptime').textContent = `UPTIME ${Math.floor(dashboard.uptime / 3600)}h ${Math.floor(dashboard.uptime % 3600 / 60)}m`;
   $('character-count').textContent = String(dashboard.characters.length).padStart(2, '0');
   $('auth-warning').hidden = dashboard.config.authConfigured;
+  const account = dashboard.account;
+  const accountText = account?.configured ? (account.email ? `Přihlášen: ${account.email}` : 'Herní relace je připravena; ověří se při spuštění postavy.') : 'Účet není připojen';
+  $('account-status').textContent = accountText;
+  $('account-dialog-status').textContent = accountText;
+  $('manage-account').textContent = account?.configured ? 'Spravovat účet' : 'Připojit účet';
+  $('disconnect-account').hidden = !account?.configured;
   $('add-character').disabled = dashboard.characters.length >= dashboard.config.maxCharacters;
   $('characters').innerHTML = dashboard.characters.length ? dashboard.characters.map(c => {
     const session = sessions.get(c.id), state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
@@ -55,13 +61,36 @@ async function refresh(initial = false) {
 }
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = event.submitter; button.disabled = true;
-  try { await api('/login', 'POST', { password: $('password').value }); $('password').value = ''; $('login-error').textContent = ''; await refresh(); }
+  try { await api('/login', 'POST', { username: $('username').value, password: $('password').value }); $('password').value = ''; $('login-error').textContent = ''; await refresh(); }
   catch (error) { $('login-error').textContent = error.message; }
   finally { button.disabled = false; }
 });
 $('logout').addEventListener('click', async () => {
-  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; selectedScript = ''; dirty = false; }
+  try { await api('/logout', 'POST', {}); active = false; $('panel').hidden = true; $('login').hidden = false; $('script-source').value = ''; $('script-name').value = ''; $('account-dialog').close(); $('game-password').value = ''; $('game-cookie').value = ''; selectedScript = ''; dirty = false; }
   catch (error) { toast(error.message, true); }
+});
+function openAccount() {
+  $('game-account-error').textContent = ''; $('game-password').value = ''; $('game-cookie').value = '';
+  $('account-dialog').showModal();
+}
+$('open-account').addEventListener('click', openAccount);
+$('manage-account').addEventListener('click', openAccount);
+$('close-account').addEventListener('click', () => $('account-dialog').close());
+for (const [formId, endpoint] of [['game-login-form', '/account/login'], ['game-cookie-form', '/account/cookie']]) {
+  $(formId).addEventListener('submit', async event => {
+    event.preventDefault(); event.submitter.disabled = true; $('game-account-error').textContent = '';
+    const body = formId === 'game-login-form' ? { email: $('game-email').value, password: $('game-password').value } : { cookie: $('game-cookie').value };
+    try {
+      await api(endpoint, 'POST', body); toast(formId === 'game-login-form' ? 'Herní účet přihlášen.' : 'Herní cookie uložena.'); await refresh(); $('account-dialog').close();
+    } catch (error) { $('game-account-error').textContent = error.message; }
+    finally { $('game-password').value = ''; $('game-cookie').value = ''; event.submitter.disabled = false; }
+  });
+}
+$('disconnect-account').addEventListener('click', async () => {
+  $('disconnect-account').disabled = true;
+  try { await api('/account/disconnect', 'POST', {}); await refresh(); $('account-dialog').close(); toast('Účet odpojen, postavy zastaveny.'); }
+  catch (error) { $('game-account-error').textContent = error.message; }
+  finally { $('disconnect-account').disabled = false; }
 });
 function openCharacter(character) {
   $('character-form').reset(); $('character-id').value = character?.id || ''; $('dialog-title').textContent = character ? 'Upravit postavu' : 'Přidat postavu';

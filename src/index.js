@@ -2,12 +2,16 @@ import { configFromEnv } from './config.js';
 import { Store } from './store.js';
 import { Runtime } from './runtime.js';
 import { createApp } from './app.js';
+import { createWebServer } from './server.js';
+import { GameAccount } from './game-account.js';
 
 const config = configFromEnv();
 const store = new Store(config.dataDir); await store.init();
 const runtime = new Runtime(config, store);
-const app = createApp(config, store, runtime);
-const server = app.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: http://${config.host}:${config.port}`));
+const account = new GameAccount(config, runtime); await account.init();
+const app = createApp(config, store, runtime, account);
+const server = await createWebServer(config, app);
+server.listen(config.port, config.host, () => console.log(`Adventure Land Mainframe: ${config.tls.enabled ? 'https' : 'http'}://${config.host}:${config.port}`));
 server.on('error', error => { console.error(error.message); process.exit(1); });
 let stopping = false;
 async function shutdown() {

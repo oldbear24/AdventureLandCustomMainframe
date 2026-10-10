@@ -6,3 +6,8 @@ coverage/
 test-results/
 *.log
 mainframe-backup*.json
+certs/
+*.pem
+*.key
+*.p12
+*.pfx

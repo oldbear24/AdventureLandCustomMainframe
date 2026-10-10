@@ -68,7 +68,7 @@ export class Runtime {
     if (this.closing) throw new Error('Server se vypíná.');
     const character = this.store.snapshot().characters.find(c => c.id === id);
     if (!character) throw new Error('Postava neexistuje.');
-    if (!this.config.authCookie) throw new Error('Na serveru nastav AL_AUTH_COOKIE.');
+    if (!this.config.authCookie) throw new Error('Připoj herní účet v panelu nebo nastav AL_AUTH_COOKIE.');
     if (this.sessions.has(id)) return;
     if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
     const session = { id, character, status: 'starting', context: null, page: null, state: null, attempts: 0, nextRetry: 0, startedAt: new Date().toISOString(), error: null };
@@ -96,7 +96,7 @@ export class Runtime {
     await page.goto(selection.href, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     await page.waitForFunction(() => typeof window.user_id === 'string', null, { timeout: 15_000 });
     const authenticated = await withDeadline(page.evaluate(() => !!window.user_id));
-    if (!authenticated) throw new Error('Přihlášení ke hře selhalo. Obnov AL_AUTH_COOKIE a restartuj server.');
+    if (!authenticated) throw new Error('Přihlášení ke hře selhalo. Obnov přihlášení v dialogu Herní účet.');
     await page.waitForFunction(() => Array.isArray(window.X?.characters) && Array.isArray(window.X?.servers), null, { timeout: 30_000 });
     // Do not take over a character that is already connected elsewhere.
     const ownership = await withDeadline(page.evaluate(character => {

@@ -1,23 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import { GameAccount } from '../src/game-account.js';
 import { Store } from '../src/store.js';
 import { configFromEnv } from '../src/config.js';
 import { createApp } from '../src/app.js';
 import { Runtime, characterUrl, withDeadline } from '../src/runtime.js';
 
 const config = () => configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', AL_AUTH_COOKIE: 'fake-user-fake-auth-secret' });
-async function fixture(t) {
+async function fixture(t, requestGame = async () => { throw new Error('Live game requests are disabled in tests'); }) {
   const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-test-'));
   const store = new Store(directory); await store.init();
-  const runtime = new Runtime(config(), store);
-  const app = createApp(config(), store, runtime);
+  const configuration = config(); configuration.dataDir = directory;
+  const runtime = new Runtime(configuration, store);
+  const account = new GameAccount(configuration, runtime, requestGame); await account.init();
+  const app = createApp(configuration, store, runtime, account);
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const origin = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { app.locals.dispose(); await runtime.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
@@ -30,7 +33,7 @@ async function fixture(t) {
     const result = await request('/api/login', 'POST', { password: config().password });
     assert.equal(result.status, 200); cookie = result.response.headers.get('set-cookie').split(';')[0];
   }
-  return { directory, store, runtime, request, login };
+  return { directory, store, runtime, account, configuration, request, login };
 }
 test('configuration rejects missing password and invalid limits', () => {
   assert.throws(() => configFromEnv({}), /ADMIN_PASSWORD/);
@@ -40,6 +43,7 @@ test('configuration rejects missing password and invalid limits', () => {
 test('dashboard requires login, session is HttpOnly, logout revokes access', async t => {
   const f = await fixture(t);
   assert.equal((await f.request('/api/dashboard')).status, 401);
+  assert.equal((await f.request('/api/login', 'POST', { username: 'someone-else', password: config().password })).status, 401);
   const login = await f.request('/api/login', 'POST', { password: config().password });
   assert.match(login.response.headers.get('set-cookie'), /HttpOnly/);
   assert.match(login.response.headers.get('set-cookie'), /SameSite=Strict/);
@@ -132,7 +136,7 @@ test('the actual Node 22 startup command serves the panel without game credentia
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   const child = spawn(process.execPath, ['src/bootstrap.js'], {
     cwd: fileURLToPath(new URL('../', import.meta.url)),
-    env: { ...process.env, ADMIN_PASSWORD: config().password, AL_AUTH_COOKIE: '', PORT: String(port), HOST: '127.0.0.1', DATA_DIR: directory },
+    env: { ...process.env, ADMIN_PASSWORD: config().password, AL_AUTH_COOKIE: '', TLS_ENABLED: 'false', COOKIE_SECURE: 'false', PUBLIC_ORIGIN: '', PORT: String(port), HOST: '127.0.0.1', DATA_DIR: directory },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
@@ -149,4 +153,63 @@ test('the actual Node 22 startup command serves the panel without game credentia
   assert.equal((await fetch(`http://127.0.0.1:${port}/healthz`)).status, 200);
   const response = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(response.status, 200); assert.match(await response.text(), /Vlastní mainframe/);
+});
+test('game account login only authenticates existing accounts and stores an encrypted session without the password', async t => {
+  let calls = 0;
+  const f = await fixture(t, async (url, options) => {
+    calls++; assert.equal(url, 'https://adventure.land/api/signup_or_login');
+    assert.equal(options.redirect, 'error');
+    assert.deepEqual(JSON.parse(options.body), { email: 'player@example.com', password: 'my-game-password', only_login: true });
+    return new Response(JSON.stringify({ success: true, user: 'game-user', auth: 'a-realistic-long-fixture-token' }), { status: 200 });
+  });
+  assert.equal((await f.request('/api/account')).status, 401);
+  assert.equal((await f.request('/api/account/login', 'POST', { email: 'player@example.com', password: 'my-game-password' })).status, 401);
+  assert.equal(calls, 0); await f.login();
+  const login = await f.request('/api/account/login', 'POST', { email: 'player@example.com', password: 'my-game-password' });
+  assert.equal(login.status, 200); assert.equal(login.data.configured, true); assert.equal(calls, 1);
+  assert.equal(JSON.stringify(login.data).includes('fixture-token'), false);
+  assert.equal(f.configuration.authCookie, 'game-user-a-realistic-long-fixture-token');
+  const disk = await readFile(path.join(f.directory, 'account.enc.json'), 'utf8');
+  assert.equal(disk.includes('my-game-password'), false); assert.equal(disk.includes('fixture-token'), false); assert.equal(disk.includes('player@example.com'), false);
+  const restoredConfig = { ...f.configuration, authCookie: '' };
+  const restored = new GameAccount(restoredConfig, f.runtime); await restored.init();
+  assert.equal(restoredConfig.authCookie, f.configuration.authCookie); assert.equal(restored.status().email, 'player@example.com');
+});
+test('failed game login preserves previous credentials and does not leak upstream secrets', async t => {
+  const f = await fixture(t, async () => new Response(JSON.stringify({ failed: true, reason: 'wrong_password', auth: 'should-not-leak' }), { status: 401 }));
+  await f.login(); const original = f.configuration.authCookie;
+  const result = await f.request('/api/account/login', 'POST', { email: 'player@example.com', password: 'wrong-password' });
+  assert.equal(result.status, 401); assert.equal(f.configuration.authCookie, original);
+  assert.equal(JSON.stringify(result.data).includes('should-not-leak'), false);
+});
+test('account change is blocked while a character is active; disconnect stops it and persists logout', async t => {
+  let calls = 0; const f = await fixture(t, async () => { calls++; throw new Error('Must not call upstream'); }); await f.login();
+  const character = (await f.request('/api/characters', 'POST', { name: 'Warrior', region: 'EU', server: 'I', autoStart: true })).data;
+  f.runtime.sessions.set(character.id, { id: character.id });
+  assert.equal((await f.request('/api/account/login', 'POST', { email: 'player@example.com', password: 'password' })).status, 409);
+  assert.equal(calls, 0);
+  const result = await f.request('/api/account/disconnect', 'POST', {});
+  assert.equal(result.status, 200); assert.equal(result.data.configured, false); assert.equal(f.runtime.sessions.size, 0);
+  assert.equal(f.store.snapshot().characters[0].autoStart, false);
+  const restarted = { ...f.configuration, authCookie: 'old-env-cookie' };
+  await new GameAccount(restarted, f.runtime).init(); assert.equal(restarted.authCookie, '');
+});
+test('manual game cookie is encrypted and excluded from API responses', async t => {
+  const f = await fixture(t); await f.login();
+  const cookie = 'fixture-account-long-secret-cookie';
+  const result = await f.request('/api/account/cookie', 'POST', { cookie });
+  assert.equal(result.status, 200); assert.equal(f.configuration.authCookie, cookie);
+  assert.equal(JSON.stringify((await f.request('/api/dashboard')).data).includes(cookie), false);
+  assert.equal((await readFile(path.join(f.directory, 'account.enc.json'), 'utf8')).includes(cookie), false);
+  assert.equal((await f.request('/api/account/cookie', 'POST', { cookie: 'auth=x; other=y' })).status, 400);
+});
+test('tampering with a saved game session fails closed', async t => {
+  const f = await fixture(t); await f.account.setCookie('fixture-account-long-secret-cookie');
+  const file = path.join(f.directory, 'account.enc.json');
+  const stored = JSON.parse(await readFile(file, 'utf8'));
+  const data = Buffer.from(stored.data, 'base64'); data[0] ^= 1; stored.data = data.toString('base64');
+  await writeFile(file, JSON.stringify(stored));
+  const restarted = { ...f.configuration, authCookie: '' };
+  await assert.rejects(new GameAccount(restarted, f.runtime).init(), /dešifrovat/);
+  assert.equal(restarted.authCookie, '');
 });

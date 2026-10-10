@@ -9,9 +9,10 @@ import { Store } from '../src/store.js';
 import { Runtime, GAME_ORIGIN } from '../src/runtime.js';
 import { createApp } from '../src/app.js';
 import { configFromEnv } from '../src/config.js';
+import { GameAccount } from '../src/game-account.js';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'al-mainframe-browser-'));
-const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', AL_AUTH_COOKIE: 'fixture-user-fixture-auth-secret' });
+const config = configFromEnv({ ADMIN_PASSWORD: 'test-password-is-long-enough', DATA_DIR: directory });
 const store = new Store(directory); await store.init();
 let alreadyOnline = false, accountValid = true, owned = true, crashed = false;
 const navigations = [];
@@ -41,7 +42,13 @@ const browserType = {
   },
 };
 const runtime = new Runtime(config, store, browserType);
-const app = createApp(config, store, runtime);
+const account = new GameAccount(config, runtime, async (url, options) => {
+  assert.equal(url, `${GAME_ORIGIN}/api/signup_or_login`);
+  assert.equal(JSON.parse(options.body).only_login, true);
+  if (JSON.parse(options.body).password !== 'fixture-game-password') return new Response(JSON.stringify({ failed: true, reason: 'wrong_password' }), { status: 401 });
+  return new Response(JSON.stringify({ success: true, user: 'fixture-user', auth: 'fixture-auth-secret' }), { status: 200 });
+}); await account.init();
+const app = createApp(config, store, runtime, account);
 const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
 const origin = `http://127.0.0.1:${server.address().port}`;
 let uiBrowser;
@@ -56,6 +63,18 @@ try {
   await page.locator('#login-form button').click();
   await page.locator('#panel').waitFor({ state: 'visible' });
   assert.match(await page.locator('#characters').textContent(), /Tvůj tým/);
+  await page.locator('#manage-account').click();
+  await page.locator('#game-email').fill('fixture@example.com');
+  await page.locator('#game-password').fill('wrong-game-password');
+  await page.locator('#game-login-form button').click();
+  await page.waitForFunction(() => document.getElementById('game-account-error').textContent.includes('selhalo'));
+  assert.equal(await page.locator('#panel').isVisible(), true);
+  assert.equal(await page.locator('#game-password').inputValue(), '');
+  await page.locator('#game-password').fill('fixture-game-password');
+  await page.locator('#game-login-form button').click();
+  await page.locator('#account-dialog').waitFor({ state: 'hidden' });
+  assert.match(await page.locator('#account-status').textContent(), /fixture@example.com/);
+  assert.equal(await page.locator('#game-password').inputValue(), '');
   await page.locator('#script-name').fill('Fixture warrior');
   await page.locator('#script-source').fill('game_log("fixture CODE ready"); console.log("browser bridge verified");');
   await page.locator('#save-script').click();
@@ -111,9 +130,12 @@ try {
     await runtime.stop(id);
   }
   assert.equal(crashed, true);
+  await page.locator('#manage-account').click(); await page.locator('#disconnect-account').click();
+  await page.locator('#account-dialog').waitFor({ state: 'hidden' });
+  assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: UI login/edit/save/reload/logout, desktop/mobile layout, real Chromium game bridge, socket recovery, browser recovery, and ownership/online/auth preflight. All game traffic used a local fixture.');
+  console.log('PASS: panel and game account login/logout, encrypted credentials, UI edit/save/reload, desktop/mobile layout, real Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

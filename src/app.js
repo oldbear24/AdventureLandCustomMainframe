@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { characterSchema, scriptSchema } from './store.js';
 
@@ -9,14 +9,16 @@ const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-export function createApp(config, store, runtime) {
+export function createApp(config, store, runtime, account = null) {
   const app = express(); app.disable('x-powered-by');
-  const sessions = new Map(), attempts = new Map();
+  const sessions = new Map(), attempts = new Map(), gameAttempts = new Map();
   const salt = randomBytes(32), passwordHash = scryptSync(config.password, salt, 64);
+  const usernameHash = createHash('sha256').update(config.username).digest();
   const cleanup = setInterval(() => {
     const now = Date.now();
     for (const [key, value] of sessions) if (value.expires < now) sessions.delete(key);
     for (const [key, value] of attempts) if (value.until < now) attempts.delete(key);
+    for (const [key, value] of gameAttempts) if (value.until < now) gameAttempts.delete(key);
   }, 60_000); cleanup.unref();
   app.locals.dispose = () => clearInterval(cleanup);
   app.use((req, res, next) => {
@@ -42,13 +44,15 @@ export function createApp(config, store, runtime) {
     return { token, ...session };
   };
   app.post('/api/login', (req, res) => {
-    const password = z.object({ password: z.string().max(1024) }).parse(req.body).password;
+    const { username, password } = z.object({ username: z.string().max(80).default('admin'), password: z.string().max(1024) }).parse(req.body);
     const key = req.ip;
     const counter = attempts.get(key) || { count: 0, until: Date.now() + 15 * 60 * 1000 };
     if (counter.until < Date.now()) { counter.count = 0; counter.until = Date.now() + 15 * 60 * 1000; }
     if (counter.count >= 10) { res.set('Retry-After', String(Math.ceil((counter.until - Date.now()) / 1000))); return res.status(429).json({ error: 'Příliš mnoho pokusů. Zkus to za 15 minut.' }); }
-    if (!timingSafeEqual(scryptSync(password, salt, 64), passwordHash)) {
-      counter.count += 1; attempts.set(key, counter); return res.status(401).json({ error: 'Nesprávné heslo.' });
+    const passwordMatches = timingSafeEqual(scryptSync(password, salt, 64), passwordHash);
+    const usernameMatches = timingSafeEqual(createHash('sha256').update(username).digest(), usernameHash);
+    if (!passwordMatches || !usernameMatches) {
+      counter.count += 1; attempts.set(key, counter); return res.status(401).json({ error: 'Nesprávné přihlašovací jméno nebo heslo.' });
     }
     attempts.delete(key);
     const old = sessionFor(req); if (old) sessions.delete(old.token);
@@ -56,14 +60,37 @@ export function createApp(config, store, runtime) {
     sessions.set(token, { expires: Date.now() + cookieOptions.maxAge });
     res.cookie('mf_session', token, cookieOptions).json({ ok: true });
   });
-  app.use('/api', (req, res, next) => sessionFor(req) ? next() : res.status(401).json({ error: 'Přihlas se do panelu.' }));
+  app.use('/api', (req, res, next) => sessionFor(req) ? next() : res.status(401).json({ code: 'SESSION_REQUIRED', error: 'Přihlas se do panelu.' }));
   app.post('/api/logout', (req, res) => {
     sessions.delete(sessionFor(req).token); res.clearCookie('mf_session', { ...cookieOptions, maxAge: undefined }).json({ ok: true });
   });
+  app.get('/api/account', (_req, res) => res.json(account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null }));
+  app.use('/api/account', (req, _res, next) => {
+    if (!account) throw new HttpError(503, 'Připojení herního účtu není dostupné.');
+    if (req.method === 'POST' && !(req.secure || config.publicOrigin.startsWith('https://') || ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip))) throw new HttpError(426, 'Pro přihlášení herního účtu použij HTTPS nebo místní SSH tunel.');
+    next();
+  });
+  app.use('/api/account', (req, res, next) => {
+    if (req.method !== 'POST' || !['/login', '/cookie'].includes(req.path)) return next();
+    const current = gameAttempts.get(req.ip);
+    const counter = current && current.until > Date.now() ? current : { count: 0, until: Date.now() + 15 * 60 * 1000 };
+    if (counter.count >= 10) return res.status(429).json({ error: 'Příliš mnoho přihlášení ke hře. Zkus to za 15 minut.' });
+    counter.count++; gameAttempts.set(req.ip, counter); next();
+  });
+  app.post('/api/account/login', async (req, res) => {
+    const { email, password } = z.object({ email: z.email().max(254), password: z.string().min(1).max(1024) }).strict().parse(req.body);
+    res.json(await account.login(email, password));
+  });
+  app.post('/api/account/cookie', async (req, res) => {
+    const { cookie } = z.object({ cookie: z.string().trim().min(8).max(4096).regex(/^[^\s;\r\n]+$/) }).strict().parse(req.body);
+    res.json(await account.setCookie(cookie));
+  });
+  app.post('/api/account/disconnect', async (_req, res) => res.json(await account.disconnect(store)));
   app.get('/api/dashboard', (_req, res) => res.json({
     characters: store.snapshot().characters, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
     sessions: runtime.snapshot(), logs: runtime.logs.slice(-150),
     config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters },
+    account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
     uptime: Math.floor(process.uptime()),
   }));
   app.post('/api/characters', async (req, res) => {

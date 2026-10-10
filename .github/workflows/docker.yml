@@ -112,6 +112,48 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test direct HTTPS and login inside image
+        env:
+          IMAGE: ${{ steps.image.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          certs="$(mktemp -d)"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -keyout "$certs/privkey.pem" -out "$certs/fullchain.pem"
+          chmod 755 "$certs"
+          sudo chown 1000:1000 "$certs/privkey.pem"
+          sudo chmod 600 "$certs/privkey.pem"
+          docker run --detach --name mainframe-https-smoke --init \
+            --publish 127.0.0.1:3443:3000 \
+            --mount "type=bind,source=$certs,target=/app/certs,readonly" \
+            --env ADMIN_USERNAME=tls-operator \
+            --env ADMIN_PASSWORD=ci-smoke-test-password-only \
+            --env TLS_ENABLED=true \
+            --env TLS_CERT_FILE=/app/certs/fullchain.pem \
+            --env TLS_KEY_FILE=/app/certs/privkey.pem \
+            --env PUBLIC_ORIGIN=https://localhost:3443 \
+            "$IMAGE"
+          trap 'docker logs mainframe-https-smoke; docker rm --force mainframe-https-smoke; rm -rf "$certs"' EXIT
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --cacert "$certs/fullchain.pem" https://localhost:3443/healthz; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          docker exec mainframe-https-smoke node src/healthcheck.js
+          curl --fail --silent --show-error --cacert "$certs/fullchain.pem" \
+            --header 'Origin: https://localhost:3443' --header 'Content-Type: application/json' \
+            --data '{"username":"tls-operator","password":"ci-smoke-test-password-only"}' \
+            --dump-header "$certs/login-headers" --cookie-jar "$certs/cookies" \
+            https://localhost:3443/api/login
+          grep -iq 'set-cookie:.*; Secure' "$certs/login-headers"
+          curl --fail --silent --show-error --cacert "$certs/fullchain.pem" \
+            --cookie "$certs/cookies" https://localhost:3443/api/dashboard > /dev/null
       - name: Publish verified image
         env:
           LATEST_IMAGE: ${{ steps.image.outputs.latest }}
@@ -125,5 +167,5 @@ jobs:
             echo "- Latest: \`$LATEST_IMAGE\`"
             echo "- This commit: \`$COMMIT_IMAGE\`"
             echo '- Platform: linux/amd64'
-            echo '- Backend, browser bridge, container startup and Chromium smoke tests passed.'
+            echo '- Backend, browser bridge, HTTP/HTTPS login, TLS healthcheck and Chromium smoke tests passed.'
           } >> "$GITHUB_STEP_SUMMARY"
