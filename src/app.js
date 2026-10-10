@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { characterSchema, scriptSchema } from './store.js';
+import { characterSchema, controlKeySchema, controlValueSchema, scriptSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
@@ -12,7 +12,7 @@ import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
 // Each panel page is the shared shell (login, navigation, account dialog) around its own fragment.
-const PAGES = { '/': ['overview', ''], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '] };
+const PAGES = { '/': ['overview', ''], '/automation': ['automation', 'Automatizace · '], '/map': ['map', 'Mapa · '], '/inventory': ['inventory', 'Inventáře · '], '/editor': ['editor', 'CODE editor · '], '/logs': ['logs', 'Logy · '] };
 async function renderPage(page, title) {
   const [shell, fragment] = await Promise.all([readFile(path.join(viewsDir, 'shell.html'), 'utf8'), readFile(path.join(viewsDir, `${page}.html`), 'utf8')]);
   const [content, dialogs = ''] = fragment.split('<!-- dialogs -->');
@@ -157,6 +157,61 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     res.json({ removed: await runtime.exclusive(() => runtime.setStorage(req.params.id, key, null)) });
   });
   app.delete('/api/characters/:id/storage', async (req, res) => res.json({ removed: await runtime.exclusive(() => runtime.clearStorage(req.params.id)) }));
+  // Automation page: every character with what its CODE offers to set, what it reports doing and the remembered values.
+  // Reads do not wait for the runtime queue (a reconnect can hold it for a minute); each one checks the session itself.
+  app.get('/api/automation', async (_req, res) => {
+    const characters = await Promise.all(store.snapshot().characters.map(async c => {
+      const session = runtime.sessions.get(c.id);
+      let live = null, error = null;
+      if (session?.status === 'running') {
+        try { live = await runtime.controls(c.id); } catch (failure) { error = runtime.redact(failure.message); }
+      }
+      return { id: c.id, name: c.name, status: session?.status || 'stopped', saved: c.controls || {}, pending: Object.keys(session?.pendingControls?.values || {}), live, error };
+    }));
+    res.json({ characters });
+  });
+  const characterExists = id => { if (!store.snapshot().characters.some(c => c.id === id)) throw new HttpError(404, 'Postava neexistuje.'); };
+  const rememberControl = (id, key, value) => store.update(state => {
+    const character = state.characters.find(c => c.id === id);
+    if (!character) return;
+    const controls = { ...character.controls };
+    if (value === undefined) delete controls[key]; else controls[key] = value;
+    if (Object.keys(controls).length) character.controls = controls; else delete character.controls;
+  });
+  // Sets one value in the running CODE; remember keeps it for the next connections, otherwise a remembered value is forgotten.
+  app.put('/api/characters/:id/controls/:key', async (req, res) => {
+    const key = controlKeySchema.parse(req.params.key);
+    const { value, remember } = z.object({ value: controlValueSchema, remember: z.boolean().default(false) }).strict().parse(req.body);
+    characterExists(req.params.id);
+    const result = await runtime.setControl(req.params.id, key, value);
+    if (!result.ok) throw new HttpError(422, result.message);
+    // The CODE may normalise the value (e.g. an item's display name to its key); that form is remembered.
+    await rememberControl(req.params.id, key, remember ? (controlValueSchema.safeParse(result.value).success ? result.value : value) : undefined);
+    res.json({ ok: true, value: result.value, remembered: remember });
+  });
+  app.delete('/api/characters/:id/controls/:key', async (req, res) => {
+    const key = controlKeySchema.parse(req.params.key);
+    characterExists(req.params.id);
+    const removed = Object.hasOwn(store.snapshot().characters.find(c => c.id === req.params.id).controls || {}, key);
+    await rememberControl(req.params.id, key, undefined);
+    const pending = runtime.sessions.get(req.params.id)?.pendingControls;
+    if (pending) delete pending.values[key];
+    res.json({ removed });
+  });
+  app.post('/api/characters/:id/command', async (req, res) => {
+    const { command } = z.object({ command: z.string().trim().regex(/^\/?[a-zA-Z0-9_]{1,40}( [^\r\n]{0,200})?$/, 'Příkaz má tvar /název argumenty, např. /cil spidersilk 2.') }).strict().parse(req.body);
+    characterExists(req.params.id);
+    const [, name, args = ''] = command.match(/^\/?([a-zA-Z0-9_]{1,40})(?: +(.*))?$/);
+    const result = await runtime.runCommand(req.params.id, name, args.trim());
+    if (!result.ok) throw new HttpError(422, result.message);
+    res.json({ ok: true });
+  });
+  // Item and monster keys with names, for the target fields on the Automation page.
+  app.get('/api/targets', async (_req, res) => {
+    if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json(await gameData.targets());
+  });
   app.get('/api/characters/:id/inventory', async (req, res) => res.json(await runtime.exclusive(async () => inventoryView(await runtime.inventory(req.params.id)))));
   app.get('/api/maps', async (_req, res) => {
     if (!gameData) throw new HttpError(503, 'Herní data nejsou dostupná.');
@@ -316,7 +371,9 @@ export function createApp(config, store, runtime, account = null, gameApi = null
         if (index < 0) throw new HttpError(404, 'Postava neexistuje.');
         if (state.characters.some(c => c.id !== req.params.id && c.name.toLowerCase() === input.name.toLowerCase())) throw new HttpError(409, 'Duplicitní postava.');
         if (input.scriptId && !state.scripts.some(s => s.id === input.scriptId)) throw new HttpError(400, 'Skript neexistuje.');
-        state.characters[index] = { ...input, id: req.params.id };
+        // Remembered Automation values are not part of the form and stay with the character.
+        const { controls } = state.characters[index];
+        state.characters[index] = { ...input, id: req.params.id, ...(controls ? { controls } : {}) };
       });
     });
     res.json({ ok: true });

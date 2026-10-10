@@ -82,7 +82,7 @@ function iconSheet() {
   const rows = []; for (let y = 0; y < 40; y++) { rows.push(0); for (let x = 0; x < 40; x++) rows.push(x < 20 ? 200 : 40, y < 20 ? 60 : 180, 90); }
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0))]);
 }
-const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' } },
+const fixtureData = { version: 1, items: { hpot0: { name: 'Health Potion' }, spidersilk: { name: 'Spider Silk' }, sword: { name: 'Short Sword', type: 'weapon', attack: 20, upgrade: { attack: 5 }, explanation: 'A trusty blade.' } }, npcs: {}, monsters: { goo: { name: 'Goo' }, spider: { name: 'Spider' } },
   imagesets: { pack_20: { size: 20, rows: 2, columns: 2, file: '/images/tiles/items/pack_20vt8.png' } }, positions: { hpot0: ['', 1, 0] },
   sprites: { chara6: { file: '/images/tiles/characters/chara6.png', columns: 1, rows: 1, matrix: [['mwarrior']] } }, images: { '/images/tiles/characters/chara6.png': { width: 40, height: 40 } },
   maps: { main: { key: 'main', name: 'Mainland', npcs: [{ id: 'merchant', name: 'Merchant', position: [0, -60] }], doors: [[150, 100, 24, 30, 'bank']], monsters: [{ type: 'goo', boundary: [40, 0, 140, 90], count: 3 }] }, bank: { key: 'bank', name: 'The Bank', npcs: [], doors: [], monsters: [] } },
@@ -328,6 +328,43 @@ try {
   assert.deepEqual(await gamePage.evaluate(() => [localStorage.getItem('cstore_leader'), localStorage.getItem('cstore_extra'), localStorage.getItem('game_setting')]), [null, null, 'hidden']);
   assert.equal(await page.locator('#clear-storage').isDisabled(), true);
   await page.locator('#close-storage').click();
+  // Automation: the runner exposes the farming target, module switches and a chat command handler like the account's CODE.
+  await gamePage.evaluate(() => {
+    const r = document.getElementById('maincode').contentWindow;
+    r.calls = []; r.state = { primary: { target: '', goal: 0 }, combat: true, dungeons: false };
+    r.adventure_primary = { set: (t, g) => { r.calls.push(['primary', t, g]); r.state.primary = { target: t === 'Spider Silk' ? 'spidersilk' : t, goal: Number(g) || 0 }; return true; }, clear: () => { r.state.primary = { target: '', goal: 0 }; return true; },
+      status: () => ({ ...r.state.primary, by: 'TestWarrior', status: r.state.primary.target ? 'LOVÍ: Spider' : '', sources: r.state.primary.target ? [{ name: 'Spider', chance: 0.001, map: 'halloween' }, { name: 'Phoenix', chance: 0.0002, map: '' }] : [] }) };
+    r.adventure_team = { setModule: (n, v) => { r.calls.push(['module', n, v]); r.state.combat = v; return true; }, setDungeons: v => { r.state.dungeons = v; return true; },
+      snapshot: () => ({ autonomy: { modules: { combat: { enabled: r.state.combat }, supply: { enabled: true, busy: true } } }, expedition: { enabled: r.state.dungeons, state: { reason: 'Běžné farmení mezi výpravami' } },
+        plan: { current: 'Boj: goo #7 · HP 120', next: 'Dokončit cíl; podpořit spojence; kořist', mode: 'work', leader: 'TestWarrior' },
+        events: [{ at: Date.now() - 9000, text: 'Útok na goo #6', status: 'accepted' }, { at: Date.now() - 5000, text: 'Nákup lektvarů selhal: málo zlata', status: 'failed' }, { at: Date.now() - 1000, text: 'Potvrzená sestava party: TestWarrior', status: 'confirmed' }] }) };
+    r.handle_command = (name, args) => { r.calls.push(['command', name, args]); return name === 'cil' ? true : -1; };
+  });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.locator('[data-nav=automation]').click();
+  await page.locator('.automation-card .auto-row').first().waitFor();
+  assert.match(await page.locator('.auto-plan').textContent(), /Boj: goo #7/);
+  assert.match(await page.locator('.auto-events').textContent(), /málo zlata/);
+  await page.locator('[data-control=primary] [data-field=target]').fill('Spider Silk');
+  await page.locator('[data-control=primary] [data-field=goal]').fill('2');
+  await page.locator('[data-control=primary] input[type=checkbox]').check();
+  await page.waitForFunction(() => document.querySelector('[data-control=primary] input[type=checkbox]').checked && !document.querySelector('[data-control=primary] input[type=checkbox]').disabled);
+  await page.locator('[data-control=primary] button.primary').click();
+  await page.waitForFunction(() => document.querySelector('.auto-current')?.textContent.includes('Spider Silk'));
+  assert.deepEqual(store.snapshot().characters[0].controls, { primary: { target: 'spidersilk', goal: 2 } });
+  assert.match(await page.locator('.auto-sources').textContent(), /Spider/);
+  await page.locator('[data-toggle="module.combat"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-toggle="module.combat"]')?.textContent === 'Vypnuto');
+  await page.locator('[data-command] input').fill('/cil bee');
+  await page.locator('[data-command] button').click();
+  await page.waitForFunction(() => document.querySelector('[data-command] input').value === '');
+  assert.deepEqual((await gamePage.evaluate(() => document.getElementById('maincode').contentWindow.calls)).slice(-3), [['primary', 'Spider Silk', 2], ['module', 'combat', false], ['command', 'cil', 'bee']]);
+  await page.evaluate(() => { document.getElementById('toast').hidden = true; });
+  await page.screenshot({ path: 'test-results/automation-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.screenshot({ path: 'test-results/automation-mobile.png', fullPage: true });
+  await page.locator('[data-nav=overview]').click();
   await page.setViewportSize({ width: 1440, height: 1100 });
   const scriptId = store.snapshot().scripts[0].id;
   await page.locator('[data-nav=editor]').click();
@@ -384,7 +421,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, CODE set() storage view/edit/delete, encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, CODE set() storage view/edit/delete, Automation page (farming target, module switch, remembered value, CODE command), encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   live.close(); app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));
