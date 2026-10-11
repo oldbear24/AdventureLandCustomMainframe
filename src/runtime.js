@@ -722,7 +722,7 @@ export class Runtime extends EventEmitter {
               try { return { S: window.S && typeof window.S === 'object' ? JSON.parse(JSON.stringify(window.S)) : null, titles: Object.fromEntries(Object.keys(window.S && typeof window.S === 'object' ? window.S : {}).slice(0, 80).map(key => [key, G.events?.[key]?.name || G.monsters?.[key]?.name || null])) }; }
               catch { return null; }
             })(),
-            extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, look: { skin: c.skin, cx: c.cx }, party: c.party ? { leader: c.party, members } : null } };
+            extras: { max_xp: c.max_xp, isize: c.isize, esize: Number.isFinite(c.esize) ? c.esize : (c.isize || items.length) - items.filter(Boolean).length, potions: { hp: count(/^hpot/), mp: count(/^mpot/) }, conditions, skills, lastSkillAt, look: { skin: c.skin, cx: c.cx, ctype: c.ctype, level: c.level }, party: c.party ? { leader: c.party, members } : null } };
         }));
         if (!session.state) throw new Error('Herní spojení bylo přerušeno.');
         const { extras, server, ...state } = session.state;
@@ -743,7 +743,7 @@ export class Runtime extends EventEmitter {
     }
     this.updateServers();
   }
-  // The last seen look stays saved, so the dashboard draws the character's sprite while it is offline too.
+  // The last seen look, class and level stay saved, so the dashboard draws the character's sprite and shows its class while it is offline too.
   async rememberLook(session, look) {
     if (!look || JSON.stringify(this.store.state.looks?.[session.id]) === JSON.stringify(look)) return;
     await this.store.update(state => { if (state.characters.some(c => c.id === session.id)) state.looks[session.id] = look; });

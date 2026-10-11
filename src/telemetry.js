@@ -25,12 +25,17 @@ export function partyView(raw) {
     name: m.name, ctype: label(m.ctype, 24), level: num(m.level), map: typeof m.map === 'string' && KEY.test(m.map) ? m.map : null, x: num(m.x), y: num(m.y),
   }));
   return { leader: raw.leader, members };
-}// The character's skin and cosmetics (character.skin, character.cx) for its sprite on the dashboard.
+}
+// The character's skin and cosmetics (character.skin, character.cx) for its sprite on the dashboard,
+// with its class and level so the overview knows them while the character is offline.
 export function lookView(raw) {
   if (!raw || !KEY.test(raw.skin)) return null;
   const cx = {};
   if (raw.cx && typeof raw.cx === 'object') for (const [place, id] of Object.entries(raw.cx).slice(0, 16)) if (/^[a-z]{1,16}$/.test(place) && typeof id === 'string' && KEY.test(id)) cx[place] = id;
-  return { skin: raw.skin, cx };
+  const look = { skin: raw.skin, cx };
+  if (typeof raw.ctype === 'string' && KEY.test(raw.ctype)) look.ctype = raw.ctype;
+  if (Number.isSafeInteger(raw.level) && raw.level > 0 && raw.level < 1000) look.level = raw.level;
+  return look;
 }
 export function extrasView(raw) {
   const potions = raw?.potions || {};

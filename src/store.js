@@ -33,8 +33,8 @@ export const savedScriptSchema = scriptSchema.extend({
   remoteVersion: z.string().max(100).nullable().default(null),
 });
 const LOOK_KEY = /^[a-zA-Z0-9_]{1,40}$/;
-// Last seen skin and cosmetics of each character, keyed by character id.
-const lookSchema = z.object({ skin: z.string().regex(LOOK_KEY), cx: z.record(z.string().regex(/^[a-z]{1,16}$/), z.string().regex(LOOK_KEY)) });
+// Last seen skin, cosmetics, class and level of each character, keyed by character id.
+const lookSchema = z.object({ skin: z.string().regex(LOOK_KEY), cx: z.record(z.string().regex(/^[a-z]{1,16}$/), z.string().regex(LOOK_KEY)), ctype: z.string().regex(LOOK_KEY).optional(), level: z.number().int().positive().max(999).optional() });
 // Last place each character was seen with its merchant stand open, keyed by character id.
 const standSchema = z.object({ map: z.string().max(40), x: z.number().finite(), y: z.number().finite(), realm: z.string().max(40), seenAt: z.string().max(40) }).strict();
 // Panel-wide preferences; older state files without them get the defaults.

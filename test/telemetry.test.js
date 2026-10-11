@@ -43,6 +43,8 @@ test('extras from the game page are whitelisted', () => {
   assert.equal(extrasView({ party: { leader: 'x y' } }).party, null);
   assert.deepEqual(extrasView({ look: { skin: 'marmor12a', cx: { head: 'makeup117', hair: '<b>', __proto__: 'x', Upper: 'mbody1a', hat: 7 }, auth: 'x' } }).look, { skin: 'marmor12a', cx: { head: 'makeup117' } });
   assert.equal(extrasView({ look: { skin: '../x' } }).look, null);
+  assert.deepEqual(extrasView({ look: { skin: 'marmor12a', ctype: 'ranger', level: 72 } }).look, { skin: 'marmor12a', cx: {}, ctype: 'ranger', level: 72 });
+  assert.deepEqual(extrasView({ look: { skin: 'marmor12a', ctype: '<b>', level: 1.5 } }).look, { skin: 'marmor12a', cx: {} });
 });
 test('activity and alerts cover death, idling, reconnects, potions and paused CODE', () => {
   const base = { x: 0, y: 0, xp: 1, gold: 1, level: 1, target: null, map: 'main', lastSkillAt: 10 };

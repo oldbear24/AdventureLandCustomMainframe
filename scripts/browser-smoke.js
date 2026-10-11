@@ -181,6 +181,8 @@ try {
   const session = runtime.snapshot()[0];
   assert.equal(session.status, 'running'); assert.equal(session.state.level, 42); assert.equal(session.state.codeRunning, true);
   assert.ok(runtime.logs.some(l => l.message.includes('fixture CODE ready')));
+  // The class and level stay saved with the look, so the overview shows them while the character is offline too.
+  assert.deepEqual([store.snapshot().looks[session.id].ctype, store.snapshot().looks[session.id].level], ['warrior', 42]);
   await page.reload(); await page.locator('#panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('#stat-gold').textContent !== '—');
   await page.locator('#load-owned').click();
@@ -542,6 +544,7 @@ try {
   assert.ok(runtime.logs.some(l => l.message.includes('reloaded fixture')));
   // The card shows the character's sprite, drawn from the proxied game sheet, instead of its initial.
   await page.waitForSelector('.character-card .avatar.sprite span');
+  assert.match(await page.locator('.character-card .character-title small').textContent(), /^warrior · LVL 42 · EU I/);
   assert.equal(await page.evaluate(async () => (await fetch(getComputedStyle(document.querySelector('.avatar.sprite span')).backgroundImage.slice(5, -2))).headers.get('content-type')), 'image/png');
   await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById('toast').hidden = true; });
   await page.screenshot({ path: 'test-results/dashboard-desktop.png', fullPage: true });

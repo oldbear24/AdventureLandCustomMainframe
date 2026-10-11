@@ -94,6 +94,7 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .avatar.sprite.dead{filter:grayscale(1);opacity:.55}
 .character-title h3{margin:0 0 3px;font-size:16px;overflow-wrap:anywhere}
 .character-title small{font:11px Consolas,monospace;color:#8ba597}
+.class-name{color:var(--text);text-transform:capitalize}
 .badge{font:10px Consolas,monospace;letter-spacing:1px;padding:5px 8px;border-radius:4px;color:#9cb1a5;background:#24312a;white-space:nowrap}
 .badge.running{color:var(--accent);background:#253c21}
 .badge.reconnecting,.badge.starting{color:#e9c780;background:#3c3421}

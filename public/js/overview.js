@@ -55,11 +55,15 @@ function skillsBlock(c, session) {
   const base = Date.parse(session.state.observedAt) + clockOffset, key = `skills:${c.id}`;
   return `<details class="card-more" data-key="${key}" ${openDetails.has(key) ? 'open' : ''}><summary>Cooldowny skillů <small>${skills.filter(s => s.ms > 0).length}/${skills.length} čeká</small></summary><div class="skill-list">${skills.map(s => `<div class="skill"><span title="${escape(s.key)}">${escape(s.name)}</span><b data-ready-at="${base + s.ms}">${s.ms > 0 ? `${(s.ms / 1000).toFixed(1)} s` : 'připraveno'}</b>${s.cooldown ? `<small>CD ${(s.cooldown / 1000).toFixed(s.cooldown < 10_000 ? 1 : 0)} s</small>` : ''}</div>`).join('')}</div></details>`;
 }
+// Class and level from the live state, else the last one seen running, else the account's character list.
+const ownedOf = c => app.owned.find(o => o.name.toLowerCase() === c.name.toLowerCase());
+const classOf = (c, state) => state?.ctype || app.dashboard.looks?.[c.id]?.ctype || ownedOf(c)?.class || null;
+const levelOf = (c, state) => state?.level ?? ownedOf(c)?.level ?? app.dashboard.looks?.[c.id]?.level ?? null;
 // Character sprites are layers of the game's sheets, proxied by the panel; each look is fetched once and kept.
 // Without a known look or class (or until the sprite loads) the avatar shows the name's first letter.
 const sprites = new Map();
 function avatar(c, state) {
-  const look = app.dashboard.looks?.[c.id], ctype = state?.ctype || app.owned.find(o => o.name.toLowerCase() === c.name.toLowerCase())?.class;
+  const look = app.dashboard.looks?.[c.id], ctype = classOf(c, state);
   const params = new URLSearchParams();
   if (look) {
     params.set('skin', look.skin);
@@ -79,7 +83,7 @@ function avatar(c, state) {
 function characterCard(c, session) {
   const { dashboard } = app;
   const state = session?.state, status = session?.status || 'stopped', busy = pending.has(c.id);
-  const dead = status === 'running' && state?.rip;
+  const dead = status === 'running' && state?.rip, ctype = classOf(c, state), level = levelOf(c, state);
   // Automatic CODE has no assigned script; a running character shows the default slot found at its start.
   const automatic = !c.scriptId, script = dashboard.scripts.find(s => s.id === (automatic ? session?.scriptId : c.scriptId));
   const codeState = state ? (state.codeRunning ? '<span class="code-state on">CODE běží</span>' : '<span class="code-state off">CODE stojí</span>') : '';
@@ -93,7 +97,7 @@ function characterCard(c, session) {
   const supplies = state ? `<div class="details supplies"><span title="Lektvary HP / MP v inventáři" class="${alerts.some(a => a.type === 'potions') ? 'warn' : ''}">⚗ HP ${number(state.potions?.hp)} · MP ${number(state.potions?.mp)}</span><span title="Volná místa v inventáři">▤ volno ${number(state.esize)}${state.isize ? ` / ${number(state.isize)}` : ''}</span>${state.party ? `<span title="Party">⚑ ${escape(state.party.leader)}</span>` : ''}</div>` : '';
   const running = status === 'running';
   return `<article class="character-card ${running ? 'is-running' : ''} ${alerts.length ? 'has-alert' : ''}">
-    <div class="card-head"><div class="character-title">${avatar(c, state)}<div><h3>${escape(c.name)}</h3><small>${escape(c.region)} ${escape(c.server)}${state ? ` · LVL ${state.level}` : ''}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${statusLabel(status, dead)}</span></div>
+    <div class="card-head"><div class="character-title">${avatar(c, state)}<div><h3>${escape(c.name)}</h3><small>${ctype ? `<span class="class-name">${escape(ctype)}</span> · ` : ''}${level ? `LVL ${number(level)} · ` : ''}${escape(c.region)} ${escape(c.server)}${c.autoStart ? ' · autostart' : ''}</small></div></div><span class="badge ${dead ? 'dead' : status}">${statusLabel(status, dead)}</span></div>
     ${alerts.length ? `<ul class="card-alerts" role="alert">${alerts.map(a => `<li class="alert-${a.type}"><b>${alertLabels[a.type] || a.type}</b>${escape(a.message)}</li>`).join('')}</ul>` : ''}
     <div class="meters"><div><div class="meter-label"><span>HP</span><span>${state ? `${number(state.hp)} / ${number(state.max_hp)}` : '—'}</span></div><div class="meter"><i style="--fill:${percentage(state?.hp, state?.max_hp)}%"></i></div></div><div><div class="meter-label"><span>MP</span><span>${state ? `${number(state.mp)} / ${number(state.max_mp)}` : '—'}</span></div><div class="meter mp"><i style="--fill:${percentage(state?.mp, state?.max_mp)}%"></i></div></div>${xp}</div>
     ${conditionChips(state)}
@@ -109,12 +113,11 @@ const VIEW_KEY = 'mainframe-overview-view';
 let activeView = 'table';
 try { if (localStorage.getItem(VIEW_KEY) === 'cards') activeView = 'cards'; } catch { /* Storage may be unavailable. */ }
 const expanded = new Set();
-const ownedOf = c => app.owned.find(o => o.name.toLowerCase() === c.name.toLowerCase());
 const miniMeter = (value, max, kind, label) => `<div class="meter ${kind}" title="${label} ${number(value)} / ${number(max)}"><i style="--fill:${percentage(value, max)}%"></i></div>`;
 function activeRow(c, session) {
   const state = session.state, status = session.status, busy = pending.has(c.id), running = status === 'running', dead = running && state?.rip;
-  const alerts = session.alerts || [], stats = session.stats, error = session.error || session.code?.error, owned = ownedOf(c);
-  const ctype = state?.ctype || owned?.class, level = state?.level ?? owned?.level, open = expanded.has(c.id);
+  const alerts = session.alerts || [], stats = session.stats, error = session.error || session.code?.error;
+  const ctype = classOf(c, state), level = levelOf(c, state), open = expanded.has(c.id);
   const code = !state ? '—' : state.codeRunning ? '<span class="code-state on">běží</span>' : '<span class="code-state off">stojí</span>';
   const perHour = (value, sign) => value === null || value === undefined ? '—' : sign ? signed(value) : number(value);
   return `<tr class="${alerts.length || error ? 'has-alert' : ''}">
@@ -159,12 +162,12 @@ function setOptions(select, values, all) {
 }
 function reserveRow(c, index, count, free) {
   const { dashboard } = app;
-  const busy = pending.has(c.id), owned = ownedOf(c), script = dashboard.scripts.find(s => s.id === c.scriptId), seen = dashboard.lastSeen?.[c.id];
+  const busy = pending.has(c.id), owned = ownedOf(c), ctype = classOf(c), level = levelOf(c), script = dashboard.scripts.find(s => s.id === c.scriptId), seen = dashboard.lastSeen?.[c.id];
   const start = free
     ? `<button class="primary small-button" data-action="start" data-id="${c.id}" ${busy || !dashboard.config.authConfigured ? 'disabled' : ''}>${busy ? 'Pracuji…' : '▶ Start'}</button>`
     : `<button class="ghost small-button" data-action="swap" data-id="${c.id}" ${busy || !dashboard.config.authConfigured ? 'disabled' : ''} title="Zastavit jinou postavu a spustit tuto">⇄ Vyměnit</button>`;
   return `<tr>
-    <td><div class="roster-name"><span class="order-buttons"><button class="ghost icon-button" data-action="up" data-id="${c.id}" ${index === 0 ? 'disabled' : ''} aria-label="Posunout ${escape(c.name)} výš">↑</button><button class="ghost icon-button" data-action="down" data-id="${c.id}" ${index === count - 1 ? 'disabled' : ''} aria-label="Posunout ${escape(c.name)} níž">↓</button></span><div><strong>${escape(c.name)}</strong><small>${escape(owned?.class || '—')}${owned?.level ? ` · ${number(owned.level)}` : ''}${owned?.online ? ' · online jinde' : ''}</small></div></div></td>
+    <td><div class="roster-name"><span class="order-buttons"><button class="ghost icon-button" data-action="up" data-id="${c.id}" ${index === 0 ? 'disabled' : ''} aria-label="Posunout ${escape(c.name)} výš">↑</button><button class="ghost icon-button" data-action="down" data-id="${c.id}" ${index === count - 1 ? 'disabled' : ''} aria-label="Posunout ${escape(c.name)} níž">↓</button></span><div><strong>${escape(c.name)}</strong><small>${escape(ctype || '—')}${level ? ` · ${number(level)}` : ''}${owned?.online ? ' · online jinde' : ''}</small></div></div></td>
     <td>${escape(c.region)} ${escape(c.server)}</td>
     <td>${script ? escape(script.name) : '<span class="muted">výchozí CODE</span>'}</td>
     <td><label class="check"><input type="checkbox" data-autostart="${c.id}" ${c.autoStart ? 'checked' : ''} ${busy ? 'disabled' : ''}><span class="sr-only">Autostart ${escape(c.name)}</span></label></td>
@@ -188,11 +191,11 @@ function renderReserve() {
   const stopped = dashboard.characters.filter(c => !running.has(c.id));
   const saved = new Set(dashboard.characters.map(c => c.name.toLowerCase()));
   const missing = app.owned.map((owned, index) => ({ owned, index })).filter(({ owned }) => !saved.has(owned.name.toLowerCase()));
-  setOptions($('reserve-class'), [...new Set([...stopped.map(c => ownedOf(c)?.class), ...missing.map(m => m.owned.class)].filter(Boolean))].sort(), 'Všechny třídy');
+  setOptions($('reserve-class'), [...new Set([...stopped.map(c => classOf(c)), ...missing.map(m => m.owned.class)].filter(Boolean))].sort(), 'Všechny třídy');
   setOptions($('reserve-server'), [...new Set([...stopped.map(c => `${c.region} ${c.server}`), ...missing.filter(m => m.owned.region).map(m => `${m.owned.region} ${m.owned.server}`)])].sort(), 'Všechny servery');
   const query = $('reserve-filter').value.trim().toLowerCase(), klass = $('reserve-class').value, server = $('reserve-server').value;
   const matches = (name, ctype, realm) => (!query || name.toLowerCase().includes(query)) && (!klass || ctype === klass) && (!server || realm === server);
-  const shown = stopped.filter(c => matches(c.name, ownedOf(c)?.class, `${c.region} ${c.server}`));
+  const shown = stopped.filter(c => matches(c.name, classOf(c), `${c.region} ${c.server}`));
   const shownMissing = missing.filter(m => matches(m.owned.name, m.owned.class, m.owned.region ? `${m.owned.region} ${m.owned.server}` : ''));
   visibleReserve = shown.map(c => c.id);
   $('reserve-count').textContent = `${stopped.length}${missing.length ? ` · ${missing.length} v účtu mimo panel` : ''}`;
