@@ -1,5 +1,5 @@
       <section id="view-stats" class="view" aria-labelledby="stats-title">
-        <header class="page-head"><div><p class="eyebrow">TELEMETRIE</p><h1 id="stats-title">Dlouhodobé statistiky</h1></div><div class="range-tabs" role="group" aria-label="Období"><button class="ghost" data-range="24h">24 hodin</button><button class="ghost" data-range="3d">3 dny</button><button class="ghost" data-range="7d">7 dní</button><button class="ghost" data-range="14d">14 dní</button></div></header>
+        <header class="page-head"><div><p class="eyebrow">TELEMETRIE</p><h1 id="stats-title">Dlouhodobé statistiky</h1></div><div class="range-tabs" role="group" aria-label="Období"><button class="ghost" data-range="24h">24 hodin</button><button class="ghost" data-range="3d">3 dny</button><button class="ghost" data-range="7d">7 dní</button><button class="ghost" data-range="14d">14 dní</button><button class="ghost" data-range="30d">30 dní</button><button class="ghost" data-range="90d">90 dní</button><button class="ghost" data-range="1y">Rok</button></div></header>
         <section id="stats-tiles" class="stats stats-tiles" aria-label="Souhrn období"></section>
         <div id="stats-body" class="stats-body">
           <div id="stats-legend" class="chart-legend" aria-label="Postavy"></div>
@@ -10,6 +10,6 @@
           <section class="surface chart-card" aria-labelledby="chart-bars-title"><h2 id="chart-bars-title">XP za hodinu</h2><p id="chart-bars-note" class="fine"></p><div id="chart-bars" class="chart"></div></section>
           <section class="surface" aria-labelledby="stats-table-title"><div class="section-head compact"><h2 id="stats-table-title">Souhrn postav</h2></div><div id="stats-table" class="table-wrap"></div></section>
         </div>
-        <p class="fine">Vzorek levelu, XP a zlata se ukládá každých 5 minut do Docker volume (soubor <code>history.json</code>) a drží se 14 dní; restart serveru ho nesmaže. Mezera delší než 15 minut znamená, že postava neběžela, a do XP/h ani času online se nepočítá. Smrti, levely a výpadky pocházejí z Deníku.</p>
+        <p class="fine">Vzorek levelu, XP a zlata se ukládá každých 5 minut do databáze v Docker volume (soubor <code>history.db</code>) a drží se měsíc; z nich se průběžně skládají hodinové souhrny, které se drží 2 roky. Období do 14 dní se počítají z pětiminutových vzorků, delší z hodinových souhrnů. Restart serveru historii nesmaže. Mezera delší než 15 minut znamená, že postava neběžela, a do XP/h ani času online se nepočítá. Smrti, levely a výpadky pocházejí z Deníku.</p>
         <div id="chart-tip" class="chart-tip" role="tooltip" hidden></div>
       </section>

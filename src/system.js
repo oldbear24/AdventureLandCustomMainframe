@@ -120,6 +120,7 @@ export class SystemMonitor {
       host: { platform: `${os.type()} ${os.release()}`, node: process.version, cpus: os.cpus().length, load: os.loadavg(), totalMemory: os.totalmem(), freeMemory: os.freemem(), uptime: Math.floor(os.uptime()) },
       process: { uptime: Math.floor(process.uptime()), pid: this.pid },
       disk, data: await directorySize(this.config.dataDir), characters: await this.characters(),
+      storage: (() => { try { return this.runtime.history?.usage() ?? null; } catch { return null; } })(),
     };
   }
 }

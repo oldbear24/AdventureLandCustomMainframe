@@ -69,6 +69,7 @@ function render() {
     ['Paměť serveru', `${bytes(host.totalMemory - host.freeMemory)} z ${bytes(host.totalMemory)}`], ['Panel (Node.js)', `${bytes(latest.node.rss)} · heap ${bytes(latest.node.heapUsed)} · CPU ${percent(latest.node.cpu)}`],
     ['Běh panelu', duration(data.process.uptime * 1000)], ['Běh serveru', duration(host.uptime * 1000)],
     ['Datový adresář', data.data ? `${number(data.data.files)} souborů · ${bytes(data.data.bytes)}` : '—'],
+    ['Databáze historie', data.storage ? `${bytes(data.storage.bytes)} · deník ${number(data.storage.journal)} · vzorky ${number(data.storage.samples)} · hodiny ${number(data.storage.hourly)} · logy ${number(data.storage.logs)}` : '—'],
   ];
   $('system-host').innerHTML = facts.map(([name, value]) => `<div><small>${escape(name)}</small><strong>${escape(value)}</strong></div>`).join('');
 }

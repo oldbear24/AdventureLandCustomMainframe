@@ -1,10 +1,10 @@
 // Items page: every item of every character and the bank in one table, with where each lies.
-import { $, api, boot, escape, itemIcon, number, on } from './core.js';
+import { $, api, boot, escape, itemIcon, number, on, pageFromUrl, pageSize, pager, paginate, savePageInUrl, savePageSize } from './core.js';
 
 const BANK = '__bank__';
 const FILTERS = { q: 'items-search', place: 'items-place', owner: 'items-owner', kind: 'items-kind', level: 'items-level', sort: 'items-sort' };
 const params = new URLSearchParams(location.search);
-let data = null, loading = false;
+let data = null, loading = false, page = pageFromUrl(), size = pageSize('items');
 const placeNames = { bank: 'Banka', inventory: 'inventář', equipment: 'vybavení' };
 const GRADES = ['', 'Vysoký', 'Vzácný', 'Legendární', 'Exaltovaný'];
 
@@ -66,18 +66,21 @@ function renderOwners() {
 }
 function render() {
   renderOwners();
-  const rows = filtered(), pieces = rows.reduce((sum, r) => sum + r.count, 0);
+  const all = filtered(), pieces = all.reduce((sum, r) => sum + r.count, 0);
+  const view = paginate(all, page, size), rows = view.rows;
+  page = view.page; savePageInUrl(page);
   const sources = data.sources.map(s => {
     const label = s.kind === 'bank' ? 'Banka' : s.name;
     if (s.error) return `<span class="meta-chip draft" title="${escape(s.error)}">⚠ ${escape(label)}: nenačteno</span>`;
     return `<span class="meta-chip ${s.source === 'live' ? 'running' : ''}" title="${escape(s.observedAt ? new Date(s.observedAt).toLocaleString('cs-CZ') : 'stáří neznámé')}">${s.source === 'live' ? '● ' : ''}${escape(label)} · ${number(s.gold)} G</span>`;
   }).join('');
-  $('items-summary').innerHTML = `<span class="meta-chip slot">${number(rows.length)} druhů · ${number(pieces)} ks</span><span class="meta-chip">Zlato celkem ${number(data.gold)} G</span>${sources}<span class="meta-chip">Načteno ${escape(new Date(data.generatedAt).toLocaleTimeString('cs-CZ'))}</span>`;
+  $('items-summary').innerHTML = `<span class="meta-chip slot">${number(all.length)} druhů · ${number(pieces)} ks</span><span class="meta-chip">Zlato celkem ${number(data.gold)} G</span>${sources}<span class="meta-chip">Načteno ${escape(new Date(data.generatedAt).toLocaleTimeString('cs-CZ'))}</span>`;
   $('items-table').innerHTML = rows.length ? `<table class="party-table items-table"><thead><tr><th>Předmět</th><th>Úroveň</th><th>Počet</th><th>Kde</th></tr></thead><tbody>${rows.map(({ item, locations, count, compound }) => {
     const tip = [fullName(item), item.description, item.type && `Typ: ${item.type}`].filter(Boolean).join('\n');
     const tags = [item.grade ? `<span class="tag grade-${item.grade}">${GRADES[item.grade]}</span>` : '', compound >= 3 ? `<span class="tag slot" title="${number(compound)} odemčených kusů mimo vybavení">COMPOUND ×${Math.floor(compound / 3)}</span>` : ''].join('');
     return `<tr data-item="${escape(item.key)}"><td><div class="item-cell" title="${escape(tip)}">${itemIcon(item.icon, 24)}<span><strong>${escape(item.specialTitle || item.special ? `${item.specialTitle || item.special} ` : '')}${escape(item.title)}</strong><small>${escape(item.name)}</small></span>${tags}</div></td><td>${item.level !== null ? `+${item.level}` : '—'}</td><td><b>${number(count)}</b></td><td><div class="location-list">${locations.map(locationChip).join('')}</div></td></tr>`;
   }).join('')}</tbody></table>` : '<p class="muted">Žádný předmět neodpovídá filtrům.</p>';
+  pager($('items-pager'), view, (next, nextSize) => { page = next; size = nextSize; savePageSize('items', size); render(); $('items-table').scrollIntoView({ block: 'nearest' }); });
 }
 async function load(refresh = false) {
   if (loading) return; loading = true;
@@ -89,7 +92,7 @@ async function load(refresh = false) {
 let opened = false;
 on('dashboard', offline => { if (!offline && !opened) { opened = true; load(); } });
 on('reset', () => { opened = false; data = null; $('items-table').innerHTML = ''; $('items-summary').innerHTML = ''; });
-for (const id of Object.values(FILTERS)) $(id).addEventListener(id === 'items-search' ? 'input' : 'change', () => { saveFilters(); if (data) render(); });
+for (const id of Object.values(FILTERS)) $(id).addEventListener(id === 'items-search' ? 'input' : 'change', () => { page = 1; saveFilters(); if (data) render(); });
 $('items-refresh').addEventListener('click', () => load(true));
 
 await boot();

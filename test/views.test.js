@@ -277,7 +277,8 @@ test('long-term stats are bucketed by the viewer\'s hours and days', async t => 
   assert.equal((await f.request('/api/history/stats')).data.available, false);
   const now = Date.now();
   f.runtime.history = new History(null, () => {}, () => now);
-  f.runtime.history.samples.set('id-1', { name: 'Runner', points: [[now - 2 * 3_600_000, 5, 0, 100, 10], [now - 2 * 3_600_000 + 300_000, 5, 50, 100, 30], [now - 3_600_000, 6, 10, 200, 40]] });
+  await f.runtime.history.init();
+  for (const point of [[now - 2 * 3_600_000, 5, 0, 100, 10], [now - 2 * 3_600_000 + 300_000, 5, 50, 100, 30], [now - 3_600_000, 6, 10, 200, 40]]) f.runtime.history.addSample('id-1', 'Runner', point);
   const day = await f.request('/api/history/stats?range=24h&offset=120');
   assert.equal(day.status, 200); assert.equal(day.data.available, true);
   assert.equal(day.data.bucketMs, 3_600_000); assert.equal(day.data.to - day.data.from, 86_400_000);
@@ -286,15 +287,20 @@ test('long-term stats are bucketed by the viewer\'s hours and days', async t => 
   assert.equal(runner.xpGained, 50); assert.equal(runner.buckets.length, 24); assert.equal(runner.series.length, 3);
   const week = await f.request('/api/history/stats?range=7d&offset=-300');
   assert.equal(week.data.bucketMs, 86_400_000); assert.equal((week.data.to - 300 * 60_000) % 86_400_000, 0);
-  assert.equal((await f.request('/api/history/stats?range=1y')).status, 400);
+  // Longer ranges come from the hourly totals: the same XP, weekly columns for a year.
+  const month = await f.request('/api/history/stats?range=30d');
+  assert.equal(month.data.detailed, false); assert.equal(month.data.characters[0].xpGained, 50); assert.equal(month.data.characters[0].buckets.length, 30);
+  const year = await f.request('/api/history/stats?range=1y');
+  assert.equal(year.data.bucketMs, 7 * 86_400_000); assert.equal(year.data.characters[0].xpGained, 50);
+  assert.equal((await f.request('/api/history/stats?range=5y')).status, 400);
   assert.equal((await f.request('/api/history/stats?offset=9999')).status, 400);
-  f.runtime.history = null;
+  await f.runtime.history.close(); f.runtime.history = null;
 });
 
 test('the journal is filtered by type and character and paged both ways', async t => {
   const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
-  assert.deepEqual((await f.request('/api/journal')).data, { entries: [], more: false, available: false, types: (await f.request('/api/journal')).data.types });
-  f.runtime.history = new History(null);
+  assert.deepEqual((await f.request('/api/journal')).data, { entries: [], more: false, total: 0, page: 1, pages: 1, available: false, types: (await f.request('/api/journal')).data.types });
+  f.runtime.history = new History(null); await f.runtime.history.init();
   for (const [type, characterId] of [['start', 'id-1'], ['death', 'id-1'], ['event', null], ['death', 'id-2'], ['level', 'id-1']]) f.runtime.history.record({ type, characterId, message: type });
   const all = (await f.request('/api/journal')).data;
   assert.deepEqual(all.entries.map(e => e.id), [5, 4, 3, 2, 1]); assert.equal(all.available, true);
@@ -304,9 +310,34 @@ test('the journal is filtered by type and character and paged both ways', async 
   assert.deepEqual(page.entries.map(e => e.id), [5, 4]); assert.equal(page.more, true);
   assert.deepEqual((await f.request('/api/journal?before=4&limit=2')).data.entries.map(e => e.id), [3, 2]);
   assert.deepEqual((await f.request('/api/journal?after=3')).data.entries.map(e => e.id), [5, 4]);
+  // Numbered pages carry the total; until jumps back in time.
+  const second = (await f.request('/api/journal?limit=2&page=2')).data;
+  assert.deepEqual(second.entries.map(e => e.id), [3, 2]); assert.equal(second.total, 5); assert.equal(second.pages, 3);
+  assert.deepEqual((await f.request('/api/journal?limit=2&page=3')).data.entries.map(e => e.id), [1]);
+  assert.equal((await f.request(`/api/journal?until=${Date.now() - 86_400_000}`)).data.total, 0);
   assert.equal((await f.request('/api/journal?types=hack')).status, 400);
   assert.equal((await f.request('/api/journal?character=../x')).status, 400);
-  f.runtime.history = null;
+  assert.equal((await f.request('/api/journal?page=0')).status, 400);
+  await f.runtime.history.close(); f.runtime.history = null;
+});
+
+test('stored logs are paged and filtered by character, errors and text', async t => {
+  const f = await fixture(t, async () => { throw new Error('No API requests expected'); });
+  assert.deepEqual((await f.request('/api/logs')).data, { entries: [], total: 0, page: 1, pages: 1, available: false });
+  f.runtime.history = new History(null); await f.runtime.history.init();
+  f.runtime.log(null, 'info', 'Panel started.');
+  f.runtime.log('id-1', 'info', 'Moving to bees 50%');
+  f.runtime.log('id-1', 'error', 'TypeError: x is undefined');
+  f.runtime.log('id-2', 'info', 'Attacking goo');
+  const all = (await f.request('/api/logs?limit=2')).data;
+  assert.deepEqual(all.entries.map(e => e.message), ['Attacking goo', 'TypeError: x is undefined']); assert.equal(all.total, 4); assert.equal(all.pages, 2);
+  assert.deepEqual((await f.request('/api/logs?character=system')).data.entries.map(e => e.message), ['Panel started.']);
+  assert.deepEqual((await f.request('/api/logs?character=id-1&errors=1')).data.entries.map(e => e.level), ['error']);
+  // The search is plain text: % and _ match only themselves.
+  assert.deepEqual((await f.request('/api/logs?q=50%25')).data.entries.map(e => e.characterId), ['id-1']);
+  assert.equal((await f.request('/api/logs?q=_')).data.total, 0);
+  assert.equal((await f.request('/api/logs?character=../x')).status, 400);
+  await f.runtime.history.close(); f.runtime.history = null;
 });
 
 test('server events list realms and save which events notify', async t => {

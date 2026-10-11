@@ -8,7 +8,7 @@ import { MAX_SAVED_CHARACTERS, characterSchema, controlKeySchema, controlValueSc
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { aggregateItems, equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
-import { JOURNAL_TYPES } from './history.js';
+import { DETAIL_SPAN, JOURNAL_TYPES } from './history.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 const viewsDir = fileURLToPath(new URL('../views', import.meta.url));
@@ -318,23 +318,43 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (!system) throw new HttpError(503, 'Přehled systému není dostupný.');
     res.json(await system.report());
   });
-  // The persistent journal, newest first; after polls for new entries, before pages back.
+  // The persistent journal, newest first; after polls for new entries, before pages back from an id,
+  // page counts pages from the newest entry or from until (a time to jump back to).
+  const id = z.coerce.number().int().min(0).optional();
+  const paging = { page: z.coerce.number().int().min(1).max(100_000).default(1), until: z.coerce.number().int().min(0).optional() };
   app.get('/api/journal', (req, res) => {
-    const id = z.coerce.number().int().min(0).optional();
     const query = z.object({
       types: z.string().max(200).optional().transform(value => value ? value.split(',').filter(Boolean) : null).pipe(z.array(z.enum(JOURNAL_TYPES)).nullable()),
-      character: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(), before: id, after: id, limit: z.coerce.number().int().min(1).max(200).default(100),
+      character: z.string().regex(/^[a-zA-Z0-9-]{1,64}$/).optional(), before: id, after: id, limit: z.coerce.number().int().min(1).max(200).default(100), ...paging,
     }).parse(req.query);
-    const result = runtime.history ? runtime.history.query({ types: query.types, characterId: query.character ?? null, before: query.before ?? null, after: query.after ?? null, limit: query.limit }) : { entries: [], more: false };
+    const result = runtime.history
+      ? runtime.history.query({ types: query.types, characterId: query.character ?? null, before: query.before ?? null, after: query.after ?? null, until: query.until ?? null, page: query.page, limit: query.limit })
+      : { entries: [], more: false, total: 0, page: 1, pages: 1 };
     res.json({ ...result, available: !!runtime.history, types: JOURNAL_TYPES });
   });
+  // Stored game and CODE logs (a week), newest first, a page at a time.
+  app.get('/api/logs', (req, res) => {
+    const query = z.object({
+      character: z.union([z.literal('system'), z.string().regex(/^[a-zA-Z0-9-]{1,64}$/)]).optional(), errors: z.enum(['0', '1']).default('0'),
+      q: z.string().max(100).default(''), limit: z.coerce.number().int().min(1).max(200).default(100), ...paging,
+    }).parse(req.query);
+    const result = runtime.history
+      ? runtime.history.logs({ characterId: query.character ?? null, errors: query.errors === '1', text: query.q.trim(), until: query.until ?? null, page: query.page, limit: query.limit })
+      : { entries: [], total: 0, page: 1, pages: 1 };
+    res.json({ ...result, available: !!runtime.history });
+  });
   // Long-term XP/gold stats from the persistent samples. Buckets end at the next whole hour or day of the viewer's time zone.
-  const RANGES = { '24h': [86_400_000, 3_600_000], '3d': [3 * 86_400_000, 6 * 3_600_000], '7d': [7 * 86_400_000, 86_400_000], '14d': [14 * 86_400_000, 86_400_000] };
+  const RANGES = {
+    '24h': [86_400_000, 3_600_000], '3d': [3 * 86_400_000, 6 * 3_600_000], '7d': [7 * 86_400_000, 86_400_000], '14d': [14 * 86_400_000, 86_400_000],
+    '30d': [30 * 86_400_000, 86_400_000], '90d': [90 * 86_400_000, 7 * 86_400_000], '1y': [365 * 86_400_000, 7 * 86_400_000],
+  };
   app.get('/api/history/stats', (req, res) => {
     const { range, offset } = z.object({ range: z.enum(Object.keys(RANGES)).default('24h'), offset: z.coerce.number().int().min(-840).max(840).default(0) }).parse(req.query);
     const [span, bucket] = RANGES[range], now = Date.now(), shift = offset * 60_000;
-    const to = Math.ceil((now + shift) / bucket) * bucket - shift, from = to - span;
-    res.json({ now, range, from, to, bucketMs: bucket, available: !!runtime.history, characters: runtime.history ? runtime.history.stats(from, to, bucket) : [] });
+    // Weekly columns end at the next local midnight like the daily ones.
+    const align = Math.min(bucket, 86_400_000);
+    const to = Math.ceil((now + shift) / align) * align - shift, from = to - span;
+    res.json({ now, range, from, to, bucketMs: bucket, detailed: span <= DETAIL_SPAN, available: !!runtime.history, characters: runtime.history ? runtime.history.stats(from, to, bucket) : [] });
   });
   // Bosses and server events seen by running characters, one reading per realm, and which of them notify.
   app.get('/api/server-events', async (_req, res) => {

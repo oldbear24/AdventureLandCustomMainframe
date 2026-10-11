@@ -11,4 +11,5 @@ USER node
 ENV HOST=0.0.0.0 PORT=3000 DATA_DIR=/app/data
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["node", "src/healthcheck.js"]
-CMD ["node", "src/index.js"]
+# The history database uses the built-in node:sqlite module, still marked experimental in Node 22.
+CMD ["node", "--disable-warning=ExperimentalWarning", "src/index.js"]

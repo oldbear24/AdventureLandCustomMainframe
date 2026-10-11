@@ -62,10 +62,11 @@ runtime.history = new History(directory); await runtime.history.init();
   for (const [id, name, rate] of [['seed-alpha', 'Alpha', 900], ['seed-beta', 'Beta', 400]]) {
     const points = [];
     for (let i = 288; i >= 1; i--) if (name !== 'Beta' || i < 100 || i > 112) points.push([now - i * 300_000, 40, (288 - i) * rate, 400_000, 1000 + (288 - i) * 7]);
-    runtime.history.samples.set(id, { name, points });
+    for (const point of points) runtime.history.addSample(id, name, point);
   }
-  runtime.history.journal.push({ id: 1, at: now - 3_600_000, type: 'death', characterId: 'seed-beta', name: 'Beta', message: 'Postava zemřela.', realm: null });
-  runtime.history.nextId = 2;
+  runtime.history.now = () => now - 3_600_000;
+  runtime.history.record({ type: 'death', characterId: 'seed-beta', name: 'Beta', message: 'Postava zemřela.' });
+  runtime.history.now = Date.now;
 }
 const account = new GameAccount(config, runtime, async (url, options) => {
   assert.equal(url, `${GAME_ORIGIN}/api/signup_or_login`);
@@ -354,6 +355,30 @@ try {
   runtime.journal(store.snapshot().characters[0].id, 'level', 'Dosažen level 43.');
   await page.waitForFunction(() => document.querySelector('.journal-entry').textContent.includes('level 43'), null, { timeout: 8000 });
   await page.screenshot({ path: 'test-results/journal-desktop.png', fullPage: true });
+  // Long journals are paged: 60 server events at 25 per page make three pages; the page lives in the address.
+  for (let i = 1; i <= 60; i++) runtime.history.record({ type: 'event', message: `EU I: Událost ${i}.`, realm: 'EU I' });
+  await page.evaluate(() => localStorage.setItem('mainframe-page-size:journal', '25'));
+  await page.goto(`${origin}/journal?type=event`);
+  await page.waitForFunction(() => !document.querySelector('#journal-pager').hidden);
+  assert.equal(await page.locator('.journal-entry').count(), 25);
+  assert.match(await page.locator('#journal-pager').textContent(), /1–25 z 60/);
+  await page.locator('#journal-pager [aria-label="Stránka 3"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.journal-entry').length === 10);
+  assert.match(page.url(), /page=3/); assert.match(await page.locator('.journal-entry').first().textContent(), /Událost 10\./);
+  // A day before the first entry has nothing.
+  await page.locator('#journal-until').fill(new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10));
+  await page.waitForFunction(() => document.querySelector('#journal-list .empty'));
+  await page.locator('#journal-newest').click();
+  await page.waitForFunction(() => document.querySelectorAll('.journal-entry').length === 25);
+  // Logs are stored too: the History tab pages through them with a text search.
+  await page.goto(`${origin}/logs?mode=history`);
+  await page.waitForFunction(() => document.querySelectorAll('#log-history-list .log-line').length > 3);
+  assert.equal(await page.locator('.log-panel').isHidden(), true);
+  await page.locator('#log-search').fill('Připojeno');
+  await page.waitForFunction(() => { const lines = [...document.querySelectorAll('#log-history-list .log-line')]; return lines.length && lines.every(l => l.textContent.includes('Připojeno')); });
+  assert.match(page.url(), /q=P%C5%99ipojeno/);
+  await page.locator('[data-mode=live]').click();
+  assert.equal(await page.locator('#log-history').isHidden(), true);
   // Monsters: base XP, gold, drops and spawn maps from the game data.
   await page.locator('[data-nav=monsters]').click();
   await page.waitForFunction(() => document.querySelector('#monster-table tbody'));
@@ -581,7 +606,7 @@ try {
   assert.equal(config.authCookie, ''); assert.equal((await page.locator('#auth-warning').isVisible()), true);
   await page.locator('#logout').click(); await page.locator('#login').waitFor({ state: 'visible' });
   assert.deepEqual(errors, []);
-  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, items across the account, long-term stats charts, persistent journal, server bosses/events with notification settings, monster table, system usage, CODE set() storage view/edit/delete, Automation page (farming target, module switch, remembered value, CODE command), encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
+  console.log('PASS: panel/game login, live map and logs over WebSocket and inventories/bank, items across the account, long-term stats charts, persistent journal with pages and date jump, stored log history, server bosses/events with notification settings, monster table, system usage, CODE set() storage view/edit/delete, Automation page (farming target, module switch, remembered value, CODE command), encrypted API token, owned character import, shared CODE slot import/save/autosync with API outage recovery, gold/item transfer confirmation and stale inventory refusal, desktop/mobile layout, Chromium game bridge, socket/browser recovery and ownership/online/auth preflight. All game traffic used local fixtures.');
 } finally {
   live.close(); app.locals.dispose(); await runtime.close(); await uiBrowser?.close();
   await new Promise(resolve => server.close(resolve));

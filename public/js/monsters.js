@@ -1,12 +1,12 @@
 // Monsters page: which monster to farm, from the public game data, with base XP, gold, drops and spawn maps.
-import { $, api, boot, decimal, escape, itemIcon, number, on } from './core.js';
+import { $, api, boot, decimal, escape, itemIcon, number, on, pageFromUrl, pageSize, pager, paginate, savePageInUrl, savePageSize } from './core.js';
 
 const FILTERS = { q: 'monster-search', map: 'monster-map', damage: 'monster-damage', hp: 'monster-max-hp', sort: 'monster-sort' };
 const DEFAULTS = { sort: 'xpPerHp' };
 const params = new URLSearchParams(location.search);
 for (const [key, id] of Object.entries(FILTERS)) if (params.has(key)) $(id).value = params.get(key);
 if (params.get('all') === '1') $('monster-spawning').checked = false;
-let monsters = null, loading = false;
+let monsters = null, loading = false, page = pageFromUrl(), size = pageSize('monsters');
 const DAMAGE = { physical: 'fyzický', magical: 'magický', pure: 'čistý' };
 
 function saveFilters() {
@@ -35,7 +35,8 @@ function renderMaps() {
   $('monster-map').value = maps.has(current) ? current : '';
 }
 function render() {
-  const list = rows();
+  const view = paginate(rows(), page, size), list = view.rows;
+  page = view.page; savePageInUrl(page);
   $('monster-table').innerHTML = list.length ? `<table class="party-table monster-table"><thead><tr><th>Monstrum</th><th>HP</th><th>XP</th><th>XP/HP</th><th>Zlato</th><th>Útok</th><th>Obrana</th><th>Kde</th><th>Nejčastější dropy</th></tr></thead><tbody>${list.map(m => `<tr data-monster="${escape(m.key)}" tabindex="0">
     <td><strong>${escape(m.name)}</strong>${m.boss ? ' <span class="tag draft">BOSS</span>' : ''}${m.cooperative ? ' <span class="tag" title="Odměna se dělí mezi všechny útočníky">CO-OP</span>' : ''}<small>${escape(m.key)}</small></td>
     <td>${number(m.hp)}</td><td>${m.xp === null ? '—' : number(m.xp)}</td><td><b>${m.xp === null ? '—' : decimal(m.xp / m.hp)}</b></td><td>${m.gold === null ? '—' : number(m.gold)}</td>
@@ -43,6 +44,7 @@ function render() {
     <td><small>${[m.armor && `brnění ${number(m.armor)}`, m.resistance && `rezist. ${number(m.resistance)}`, m.evasion && `úhyb ${number(m.evasion)}`].filter(Boolean).join(' · ') || '—'}</small></td>
     <td><div class="location-list">${m.spawns.slice(0, 3).map(s => `<a class="meta-chip location-chip" href="/map?map=${encodeURIComponent(s.map)}">${escape(s.title)}${s.count ? ` <b>×${number(s.count)}</b>` : ''}</a>`).join('')}${m.spawns.length > 3 ? `<span class="meta-chip location-chip">+${m.spawns.length - 3}</span>` : ''}</div></td>
     <td><div class="drop-list">${m.drops.slice(0, 3).map(d => `<span class="drop" title="${escape(`${d.title}: ${chance(d.chance)}${oneIn(d.chance)}`)}">${itemIcon(d.icon, 20)}<span>${escape(d.title)}</span><small>${chance(d.chance)}</small></span>`).join('') || '<small class="muted">—</small>'}</div></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Žádné monstrum neodpovídá filtrům.</p>';
+  pager($('monster-pager'), view, (next, nextSize) => { page = next; size = nextSize; savePageSize('monsters', size); render(); $('monster-table').scrollIntoView({ block: 'nearest' }); });
 }
 function openMonster(key) {
   const m = monsters.find(x => x.key === key); if (!m) return;
@@ -62,8 +64,8 @@ async function load() {
 let opened = false;
 on('dashboard', offline => { if (!offline && !opened) { opened = true; load(); } });
 on('reset', () => { opened = false; });
-for (const id of Object.values(FILTERS)) $(id).addEventListener(id === 'monster-search' ? 'input' : 'change', () => { saveFilters(); if (monsters) render(); });
-$('monster-spawning').addEventListener('change', () => { saveFilters(); if (monsters) render(); });
+for (const id of Object.values(FILTERS)) $(id).addEventListener(id === 'monster-search' ? 'input' : 'change', () => { page = 1; saveFilters(); if (monsters) render(); });
+$('monster-spawning').addEventListener('change', () => { page = 1; saveFilters(); if (monsters) render(); });
 $('monster-table').addEventListener('click', event => { if (event.target.closest('a')) return; const row = event.target.closest('[data-monster]'); if (row) openMonster(row.dataset.monster); });
 $('monster-table').addEventListener('keydown', event => { const row = event.target.closest('[data-monster]'); if (row && event.key === 'Enter') openMonster(row.dataset.monster); });
 $('close-monster').addEventListener('click', () => $('monster-dialog').close());

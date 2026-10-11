@@ -213,6 +213,8 @@ export class Runtime extends EventEmitter {
     const entry = { id: ++this.sequence, at: new Date().toISOString(), characterId: id, level, message: text.slice(0, 4000) };
     this.logs.push(entry);
     if (this.logs.length > LOG_LIMIT) this.logs.shift();
+    // Stored logs are optional: a failed write must not stop logging (or log about itself).
+    try { this.history?.addLog(entry); } catch { /* The in-memory log still has the entry. */ }
     this.emit('log', entry);
   }
   redact(message) {

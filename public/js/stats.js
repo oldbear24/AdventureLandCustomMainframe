@@ -1,7 +1,7 @@
 // Stats page: long-term XP and gold of every character from the persistent five-minute samples.
 import { $, api, app, boot, duration, escape, number, on, signed } from './core.js';
 
-const RANGES = ['24h', '3d', '7d', '14d'];
+const RANGES = ['24h', '3d', '7d', '14d', '30d', '90d', '1y'];
 const SERIES = 8;
 let range = RANGES.includes(new URLSearchParams(location.search).get('range')) ? new URLSearchParams(location.search).get('range') : '24h';
 let data = null, loading = false;
@@ -81,7 +81,7 @@ function lineChart(container, key, format) {
     // Each character's sample nearest the hovered time, if it ran then.
     const rows = series.map(s => {
       const nearest = s.points.reduce((best, p) => Math.abs(p.t - t) < Math.abs(best.t - t) ? p : best);
-      return { name: s.name, color: s.color, value: Math.abs(nearest.t - t) <= 15 * 60_000 ? format(nearest.v, true) : 'neběžela' };
+      return { name: s.name, color: s.color, value: Math.abs(nearest.t - t) <= (data.detailed === false ? 3_600_000 : 15 * 60_000) ? format(nearest.v, true) : 'neběžela' };
     });
     showTip(event, fullTime(t), rows);
   };
@@ -152,8 +152,7 @@ function render() {
   $('stats-legend').innerHTML = list.map(c => `<span><i style="background:${colorOf(c.name)}"></i>${escape(c.name)}</span>`).join('');
   lineChart($('chart-xp'), 'xp', (v, exact) => exact ? `${number(v)} XP` : compact(v));
   lineChart($('chart-gold'), 'gold', (v, exact) => exact ? `${signed(v)} G` : compact(v));
-  const daily = data.bucketMs >= 86_400_000;
-  $('chart-bars-title').textContent = daily ? 'XP za den' : data.bucketMs > 3_600_000 ? `XP za ${data.bucketMs / 3_600_000} hodin` : 'XP za hodinu';
+  $('chart-bars-title').textContent = data.bucketMs >= 7 * 86_400_000 ? 'XP za týden' : data.bucketMs >= 86_400_000 ? 'XP za den' : data.bucketMs > 3_600_000 ? `XP za ${data.bucketMs / 3_600_000} hodin` : 'XP za hodinu';
   $('chart-bars-note').textContent = 'Najetím na sloupec uvidíš rozpad po postavách.';
   barChart($('chart-bars'));
   $('stats-table').innerHTML = `<table class="party-table stats-table"><thead><tr><th>Postava</th><th>Level</th><th>XP</th><th>XP/h</th><th>Zlato</th><th>Gold/h</th><th>Online</th><th>Levely</th><th>Smrti</th><th>Výpadky</th></tr></thead><tbody>${list.map(c => `<tr data-character="${escape(c.id)}"><td><span class="series-key" style="background:${colorOf(c.name)}"></span><strong>${escape(c.name)}</strong></td><td>${c.levelStart === c.levelEnd ? number(c.levelEnd) : `${number(c.levelStart)} → ${number(c.levelEnd)}`}</td><td>${number(c.xpGained)}</td><td>${c.xpPerHour === null ? '—' : number(c.xpPerHour)}</td><td class="${c.goldChange < 0 ? 'negative' : ''}">${signed(c.goldChange)}</td><td>${c.goldPerHour === null ? '—' : signed(c.goldPerHour)}</td><td>${duration(c.onlineMs)}</td><td>${number(c.levels)}</td><td>${number(c.deaths)}</td><td>${number(c.disconnects)}</td></tr>`).join('')}</tbody></table>`;

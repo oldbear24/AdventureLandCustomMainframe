@@ -1,5 +1,16 @@
       <section id="view-logs" class="view" aria-labelledby="logs-title">
         <header class="page-head"><div><p class="eyebrow">TELEMETRIE</p><h1 id="logs-title">Živé logy <span class="live-dot"></span></h1></div><div class="log-tools"><label for="log-filter">Zobrazit</label><select id="log-filter"><option value="all">Všechny postavy</option><option value="system">Systém</option></select></div></header>
+        <div class="view-tabs" role="group" aria-label="Zobrazení logů"><button class="ghost" data-mode="live" aria-pressed="true">Živě</button><button class="ghost" data-mode="history" aria-pressed="false">Historie (7 dní)</button></div>
+        <div id="log-history" class="surface" hidden>
+          <div class="log-history-tools">
+            <div><label for="log-search">Hledat v textu</label><input id="log-search" type="search" maxlength="100" placeholder="např. CODE, error, moving…"></div>
+            <div><label for="log-until">Do dne</label><input id="log-until" type="date"></div>
+            <label class="check"><input id="log-errors" type="checkbox">Jen chyby</label>
+          </div>
+          <div id="log-history-list" class="logs log-history" aria-live="polite"></div>
+          <p id="logs-count" class="fine"></p>
+          <nav id="log-pager" class="pager" aria-label="Stránky logů" hidden></nav>
+        </div>
         <div class="surface log-panel"><div id="logs" class="logs" role="log" aria-label="Herní logy" tabindex="0"></div><div class="log-footer"><span id="logs-mode">Posledních 200 záznamů · obnova každých 5 sekund</span><button id="logs-bottom" class="ghost small-button" hidden>↓ Na nejnovější</button></div></div>
       </section>
 <!-- dialogs -->

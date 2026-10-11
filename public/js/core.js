@@ -21,6 +21,46 @@ export function itemIcon(icon, size = 32) {
   return `<span class="item-icon" aria-hidden="true" style="background-image:url('/api/item-sheets/${encodeURIComponent(icon.sheet)}');background-position:${px(-icon.x)} ${px(-icon.y)};background-size:${px(icon.width)} ${px(icon.height)}"></span>`;
 }
 
+// Tables show a page of rows at a time. The page lives in the address (?page=), the page size is
+// remembered per table in the browser.
+export const PAGE_SIZES = [25, 50, 100, 200];
+export function pageSize(key, fallback = 50) {
+  try { const size = Number(localStorage.getItem(`mainframe-page-size:${key}`)); return PAGE_SIZES.includes(size) ? size : fallback; }
+  catch { return fallback; }
+}
+export function savePageSize(key, size) { try { localStorage.setItem(`mainframe-page-size:${key}`, String(size)); } catch { /* Storage may be unavailable. */ } }
+export const pageFromUrl = () => Math.max(1, Number.parseInt(new URLSearchParams(location.search).get('page'), 10) || 1);
+export function savePageInUrl(page) {
+  const url = new URL(location.href);
+  if (page > 1) url.searchParams.set('page', String(page)); else url.searchParams.delete('page');
+  history.replaceState(null, '', url);
+}
+// One page of rows already in the browser; a page past the end shows the last one.
+export function paginate(rows, page, size) {
+  const pages = Math.max(1, Math.ceil(rows.length / size)), current = Math.min(Math.max(1, page), pages);
+  return { rows: rows.slice((current - 1) * size, current * size), page: current, pages, total: rows.length, size };
+}
+// Page numbers around the current one, the first and the last, with gaps between them.
+export function pageNumbers(page, pages) {
+  const shown = new Set([1, pages, page - 2, page - 1, page, page + 1, page + 2].filter(n => n >= 1 && n <= pages));
+  const out = [];
+  for (const n of [...shown].sort((a, b) => a - b)) { if (out.length && n - out.at(-1) > 1) out.push(null); out.push(n); }
+  return out;
+}
+// Renders "51–100 z 1 234 · ‹ 1 … 3 4 5 … 25 › · Na stránku" into element; go(page, size) is called on a change.
+export function pager(element, { page, pages, total, size }, go) {
+  if (!element) return;
+  if (total <= PAGE_SIZES[0]) { element.hidden = true; element.replaceChildren(); return; }
+  element.hidden = false;
+  const first = (page - 1) * size + 1, last = Math.min(total, page * size);
+  const button = (target, label, text, current = false) => `<button type="button" class="ghost small-button" data-page="${target}" aria-label="${label}"${current ? ' aria-current="page"' : ''}${target < 1 || target > pages ? ' disabled' : ''}>${text}</button>`;
+  element.innerHTML = `<span class="pager-info">${number(first)}–${number(last)} z ${number(total)}</span>
+    <span class="pager-pages">${button(page - 1, 'Předchozí stránka', '‹')}${pageNumbers(page, pages).map(n => n === null ? '<span class="pager-gap" aria-hidden="true">…</span>' : button(n, `Stránka ${n}`, number(n), n === page)).join('')}${button(page + 1, 'Další stránka', '›')}</span>
+    <label class="pager-size">Na stránku <select>${PAGE_SIZES.map(n => `<option value="${n}"${n === size ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`;
+  element.onclick = event => { const target = event.target.closest('[data-page]'); if (target && !target.disabled && Number(target.dataset.page) !== page) go(Number(target.dataset.page), size); };
+  element.onchange = event => { if (event.target.matches('select')) go(Math.floor((page - 1) * size / Number(event.target.value)) + 1, Number(event.target.value)); };
+}
+
 // Shared page state. dashboard is replaced by every poll; live states are merged into it.
 export const app = { dashboard: null, active: false, liveConnected: false, owned: [], ownedLoadedAt: 0 };
 export const runningSessions = () => app.dashboard?.sessions.filter(s => s.status === 'running' && s.state) || [];

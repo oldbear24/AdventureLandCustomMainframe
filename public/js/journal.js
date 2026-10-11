@@ -1,5 +1,5 @@
 // Journal page: the persistent timeline of starts, disconnects, deaths, level-ups, CODE changes and server events.
-import { $, api, app, boot, escape, on } from './core.js';
+import { $, api, app, boot, escape, number, on, pageFromUrl, pageSize, pager, savePageInUrl, savePageSize } from './core.js';
 
 const TYPES = {
   start: ['▶', 'Start', ''], connected: ['●', 'Připojeno', 'good'], disconnected: ['⚠', 'Výpadek', 'bad'], stop: ['■', 'Stop', ''],
@@ -8,18 +8,25 @@ const TYPES = {
 };
 const params = new URLSearchParams(location.search);
 let selected = new Set((params.get('type') || '').split(',').filter(t => Object.hasOwn(TYPES, t)));
-let character = params.get('character') || '', entries = [], more = false, loading = false, available = true;
+let character = params.get('character') || '', entries = [], loading = false, available = true;
+// until jumps back in time: the list starts with the last entry of that day.
+let until = /^\d{4}-\d{2}-\d{2}$/.test(params.get('until') || '') ? params.get('until') : '';
+let page = pageFromUrl(), size = pageSize('journal', 100), result = { total: 0, page: 1, pages: 1 };
+$('journal-until').value = until;
+const untilTime = () => until ? new Date(`${until}T23:59:59.999`).getTime() : null;
 
 function saveFilters() {
   const url = new URL(location.href);
   if (selected.size) url.searchParams.set('type', [...selected].join(',')); else url.searchParams.delete('type');
   if (character) url.searchParams.set('character', character); else url.searchParams.delete('character');
+  if (until) url.searchParams.set('until', until); else url.searchParams.delete('until');
   history.replaceState(null, '', url);
 }
 const query = extra => {
-  const search = new URLSearchParams({ limit: '100', ...extra });
+  const search = new URLSearchParams({ limit: String(size), ...extra });
   if (selected.size) search.set('types', [...selected].join(','));
   if (character) search.set('character', character);
+  if (until) search.set('until', String(untilTime()));
   return `/journal?${search}`;
 };
 function renderTypes() {
@@ -56,21 +63,31 @@ function render() {
     }
     $('journal-list').innerHTML = `${html}</ol>`;
   }
-  $('journal-count').textContent = entries.length ? `${entries.length} ${entries.length === 1 ? 'záznam' : entries.length < 5 ? 'záznamy' : 'záznamů'}${more ? ' · starší se načtou tlačítkem' : ''}` : '';
-  $('journal-more').hidden = !more;
+  const total = result.total;
+  $('journal-count').textContent = total ? `${number(total)} ${total === 1 ? 'záznam' : total < 5 ? 'záznamy' : 'záznamů'}${until ? ` do ${new Date(untilTime()).toLocaleDateString('cs-CZ')}` : ''}` : '';
+  pager($('journal-pager'), { page: result.page, pages: result.pages, total, size }, (next, nextSize) => {
+    page = next; size = nextSize; savePageSize('journal', size); load().then(() => $('view-journal').scrollIntoView({ block: 'start' }));
+  });
 }
 async function load() {
   loading = true;
-  try { const result = await api(query()); entries = result.entries; more = result.more; available = result.available; render(); }
+  try {
+    result = await api(query({ page: String(page) }));
+    // A page past the end (fewer entries after a filter) shows the last one.
+    if (result.page > result.pages) { page = result.pages; result = await api(query({ page: String(page) })); }
+    entries = result.entries; available = result.available; page = result.page; savePageInUrl(page); render();
+  }
   catch (error) { $('journal-list').innerHTML = `<p class="error">${escape(error.message)}</p>`; }
   finally { loading = false; }
 }
-// New entries are polled with every dashboard refresh and put on top.
+// On the newest page, new entries are polled with every dashboard refresh and the page is reloaded with them.
 async function poll() {
-  if (loading || !entries.length) return load();
+  if (loading) return;
+  if (!entries.length) return load();
+  if (page !== 1 || until) return;
   try {
-    const result = await api(query({ after: String(entries[0].id) }));
-    if (result.entries.length) { entries = result.entries.concat(entries); render(); }
+    const fresh = await api(query({ after: String(entries[0].id), limit: '1' }));
+    if (fresh.entries.length) await load();
   } catch { /* The next refresh tries again. */ }
 }
 let opened = false;
@@ -80,14 +97,10 @@ $('journal-types').addEventListener('click', event => {
   const button = event.target.closest('[data-type]'); if (!button) return;
   const type = button.dataset.type;
   if (!type) selected.clear(); else if (selected.has(type)) selected.delete(type); else selected.add(type);
-  saveFilters(); renderTypes(); load();
+  page = 1; saveFilters(); renderTypes(); load();
 });
-$('journal-character').addEventListener('change', () => { character = $('journal-character').value; saveFilters(); load(); });
-$('journal-more').addEventListener('click', async () => {
-  $('journal-more').disabled = true;
-  try { const result = await api(query({ before: String(entries.at(-1).id) })); entries = entries.concat(result.entries); more = result.more; render(); }
-  catch (error) { $('journal-count').textContent = error.message; }
-  finally { $('journal-more').disabled = false; }
-});
+$('journal-character').addEventListener('change', () => { character = $('journal-character').value; page = 1; saveFilters(); load(); });
+$('journal-until').addEventListener('change', () => { until = $('journal-until').value; page = 1; saveFilters(); load(); });
+$('journal-newest').addEventListener('click', () => { until = ''; $('journal-until').value = ''; page = 1; saveFilters(); load(); });
 
 await boot();
