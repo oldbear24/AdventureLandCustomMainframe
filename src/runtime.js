@@ -241,7 +241,9 @@ export class Runtime extends EventEmitter {
     return browser;
   }
   async init() {
+    // Characters start in the order of the panel's list; those beyond the running limit stay stopped.
     for (const character of this.store.snapshot().characters.filter(c => c.autoStart)) {
+      if (this.sessions.size >= this.config.maxCharacters) { this.log(character.id, 'info', `Autostart přeskočen: běží už ${this.sessions.size} z ${this.config.maxCharacters} postav.`); continue; }
       await this.start(character.id).catch(error => this.log(character.id, 'error', error.message));
     }
     if (!this.closing) {
@@ -256,7 +258,7 @@ export class Runtime extends EventEmitter {
     if (!character) throw new Error('Postava neexistuje.');
     if (!this.config.authCookie) throw new Error('Připoj herní účet v panelu nebo nastav AL_AUTH_COOKIE.');
     if (this.sessions.has(id)) return;
-    if (this.sessions.size >= this.config.maxCharacters) throw new Error('Dosažen limit aktivních postav.');
+    if (this.sessions.size >= this.config.maxCharacters) throw Object.assign(new Error(`Není volné místo: běží už ${this.sessions.size} z ${this.config.maxCharacters} postav. Jinou zastav nebo ji vyměň.`), { status: 409 });
     const downloadFailed = error => Object.assign(new Error(`Stažení CODE před startem selhalo: ${this.redact(error.message)}`), { status: 502 });
     if (character.scriptId) {
       const script = this.store.snapshot().scripts.find(s => s.id === character.scriptId);
@@ -820,6 +822,18 @@ export class Runtime extends EventEmitter {
     session.activeAlerts = active;
   }
   forget(id) { this.stats.delete(id); }
+  // Stops an active character and starts another in its place. If the new one cannot start, the old one starts again.
+  swap(id, replaceId) { return this.exclusive(async () => {
+    if (!this.store.snapshot().characters.some(c => c.id === id)) throw Object.assign(new Error('Postava neexistuje.'), { status: 404 });
+    if (this.sessions.has(id)) throw Object.assign(new Error('Postava už běží.'), { status: 409 });
+    if (!this.sessions.has(replaceId)) throw Object.assign(new Error('Postava, kterou má nahradit, neběží.'), { status: 409 });
+    await this.stopInternal(replaceId);
+    try { await this.startInternal(id); }
+    catch (error) {
+      await this.startInternal(replaceId).catch(failure => this.log(replaceId, 'error', failure.message));
+      throw error;
+    }
+  }); }
   stop(id) { return this.exclusive(() => this.stopInternal(id)); }
   async stopInternal(id) {
     const session = this.sessions.get(id);

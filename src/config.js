@@ -14,7 +14,7 @@ export function configFromEnv(env = process.env) {
   if (!/^[a-zA-Z0-9_.@-]{1,80}$/.test(username)) throw new Error('Neplatný ADMIN_USERNAME.');
   if (!!env.TLS_CERT_FILE !== !!env.TLS_KEY_FILE) throw new Error('Vlastní certifikát vyžaduje TLS_CERT_FILE i TLS_KEY_FILE.');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Neplatný PORT.');
-  if (!Number.isInteger(maxCharacters) || maxCharacters < 1 || maxCharacters > 4) throw new Error('MAX_CHARACTERS musí být 1–4.');
+  if (!Number.isInteger(maxCharacters) || maxCharacters < 1 || maxCharacters > 4) throw new Error('MAX_CHARACTERS (počet současně běžících postav) musí být 1–4.');
   let publicOrigin = '';
   if (env.PUBLIC_ORIGIN) {
     const url = new URL(env.PUBLIC_ORIGIN);

@@ -126,7 +126,7 @@ try {
   await page.locator('#password').fill(config.password);
   await page.locator('#login-form button').click();
   await page.locator('#panel').waitFor({ state: 'visible' });
-  assert.match(await page.locator('#characters').textContent(), /Tvůj tým/);
+  assert.match(await page.locator('#reserve').textContent(), /Tvůj tým/);
   await page.locator('#manage-account').click();
   await page.locator('#game-email').fill('fixture@example.com');
   await page.locator('#game-password').fill('wrong-game-password');
@@ -145,7 +145,9 @@ try {
   await page.locator('#api-token-form button').click();
   await page.locator('#account-dialog').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#api-token').inputValue(), '');
-  assert.match(await page.locator('#owned-characters').textContent(), /TestWarrior/);
+  // The account's characters appear in the reserve list until they are added to the panel.
+  await page.waitForFunction(() => /TestWarrior.*MIMO PANEL.*SavedMage.*MIMO PANEL/s.test(document.querySelector('#reserve').textContent));
+  assert.equal(await page.locator('#add-all-owned').isHidden(), false);
   await page.locator('[data-nav=editor]').click();
   await page.locator('#load-code-slots').click();
   await page.locator('#import-code-slot').click();
@@ -157,9 +159,24 @@ try {
   assert.equal(await page.locator('#character-name').inputValue(), 'TestWarrior');
   await page.locator('#character-script').selectOption({ label: 'Fixture warrior · slot 1' });
   await page.locator('#character-form button[type=submit]').click();
-  await page.locator('.character-card').waitFor();
-  await page.locator('[data-action=start]').click();
-  await page.waitForFunction(() => document.querySelector('.badge')?.textContent === 'ONLINE');
+  await page.locator('#reserve [data-action=start]').waitFor();
+  assert.match(await page.locator('#reserve tbody tr').first().textContent(), /TestWarrior.*warrior · 42.*EU I.*Fixture warrior.*zatím ne/s);
+  assert.equal(await page.locator('#reserve .roster-owned').count(), 1, 'only SavedMage is still outside the panel');
+  assert.match(await page.locator('#characters').textContent(), /Žádná postava neběží/);
+  await page.locator('#reserve [data-action=start]').click();
+  // Active characters default to the compact table; a row opens its full card.
+  await page.waitForFunction(() => document.querySelector('#characters .roster-table .badge')?.textContent === 'ONLINE');
+  assert.match(await page.locator('#stat-online').textContent(), /^1\/ 4$/);
+  assert.match(await page.locator('#stat-saved').textContent(), /1 uloženo/);
+  assert.match(await page.locator('#characters').textContent(), /Volná místa: 3/);
+  await page.locator('#characters [data-action=expand]').click();
+  await page.locator('#characters .roster-detail .character-card').waitFor();
+  await page.locator('#characters [data-action=expand]').click();
+  await page.waitForFunction(() => !document.querySelector('#characters .roster-detail'));
+  // The rest of the overview checks use the cards, which the panel remembers.
+  await page.locator('[data-view=cards]').click();
+  await page.locator('#characters .character-card').waitFor();
+  assert.equal(await page.locator('#characters .empty-slot-card').count(), 3);
   await runtime.tick();
   const session = runtime.snapshot()[0];
   assert.equal(session.status, 'running'); assert.equal(session.state.level, 42); assert.equal(session.state.codeRunning, true);
@@ -167,7 +184,8 @@ try {
   await page.reload(); await page.locator('#panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('#stat-gold').textContent !== '—');
   await page.locator('#load-owned').click();
-  await page.waitForFunction(() => document.querySelector('#owned-characters').textContent.includes('V panelu'));
+  await page.waitForFunction(() => document.querySelector('#reserve').textContent.includes('SavedMage') && !document.querySelector('#reserve').textContent.includes('TestWarrior'));
+  assert.equal(await page.locator('[data-view=cards]').getAttribute('aria-pressed'), 'true', 'the chosen view survives a reload');
   const gamePage = runtime.sessions.values().next().value.page;
   assert.equal(await gamePage.evaluate(() => window.the_code), cloudCode.code);
   await page.locator('[data-action=transfer]').click();

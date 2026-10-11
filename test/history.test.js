@@ -125,3 +125,13 @@ test('the runtime journals realm events once per realm and notifies the selected
   runtime.sessions.clear(); runtime.updateServers();
   assert.deepEqual(runtime.serverEvents(), []);
 });
+test('last seen is the newest sample or start, connection or stop of each character', () => {
+  let now = 1_000_000;
+  const history = new History(null, () => {}, () => now);
+  history.record({ type: 'start', characterId: 'a', message: 'Spuštěno.' });
+  now += 60_000; history.sample('a', 'A', { level: 1, xp: 0, max_xp: 10, gold: 0 });
+  now += 60_000; history.record({ type: 'level', characterId: 'a', message: 'Level.' });
+  history.record({ type: 'stop', characterId: 'b', message: 'Zastaveno.' });
+  history.record({ type: 'event', message: 'Boss.' });
+  assert.deepEqual(history.lastSeen(), { a: 1_060_000, b: 1_120_000 });
+});

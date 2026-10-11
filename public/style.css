@@ -150,7 +150,6 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .actions .spacer{flex:1}
 .empty{border:1px dashed #344735;border-radius:10px;padding:32px;color:#93ab9a;text-align:center}
 .empty p{margin-top:8px;font-size:13px}
-.owned-list{display:grid;gap:4px}
 .party-panel .notice{margin-bottom:10px}
 .party-panel .inventory-section:first-of-type{margin-top:4px}
 .table-wrap{overflow-x:auto}
@@ -162,9 +161,33 @@ aside{position:fixed;inset:0 auto 0 0;width:228px;border-right:1px solid var(--l
 .move-characters{display:grid;gap:2px}
 .move-characters .check{margin:4px 0}
 .meta-chip{overflow-wrap:anywhere}
-.owned-row{display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--line);padding:10px 0}
-.owned-row small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
-.owned-row button{font-size:12px}
+.roster h2 small{font:11px Consolas,monospace;color:var(--faint);margin-left:6px;font-weight:400}
+.roster .section-head{flex-wrap:wrap}
+.roster-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.roster-filters input{flex:1 1 200px;width:auto;padding:8px 10px}
+.roster-filters select{flex:0 1 190px;width:auto;padding:8px 10px}
+.roster-table td{vertical-align:middle}
+.roster-table td.negative{color:var(--danger)}
+.roster-table tr.has-alert>td:first-child{box-shadow:inset 3px 0 0 var(--danger)}
+.roster-name{display:inline-flex;align-items:center;gap:10px;vertical-align:middle}
+.roster-name strong{font-size:13px}
+.roster-name small{display:block;font:11px Consolas,monospace;color:#8ba597;margin-top:2px}
+.roster-table .alert-tag{color:var(--danger);background:var(--danger-soft);margin-left:6px}
+.roster-meters{min-width:90px}
+.roster-meters .meter{margin:3px 0}
+.roster-meters .meter.hp i{background:var(--accent)}
+.roster-actions{display:flex;gap:6px;justify-content:flex-end}
+.roster-table .check{justify-content:center}
+.roster-detail>td{white-space:normal;padding:4px 0 12px}
+.roster-owned td{color:var(--muted)}
+.roster-owned strong{color:#c3d0c9}
+.order-buttons{display:flex;flex-direction:column;gap:2px;width:24px;flex:none}
+.icon-button{padding:0 5px;font-size:11px;line-height:16px;font-weight:600}
+.empty-slot-card{border:1px dashed #344735;border-radius:10px;padding:18px;display:grid;place-content:center;gap:6px;text-align:center;color:var(--muted);min-height:140px}
+.empty-slot-card small{font-size:12px}
+.swap-options{display:grid;gap:8px}
+.swap-options button{text-align:left;font-weight:500}
+.swap-options small{display:block;margin-top:3px;font-size:12px}
 
 /* Editor */
 .editor-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px;align-items:start}
@@ -568,7 +591,10 @@ dialog .storage-actions .primary{width:auto}
   .stats .status-value{font-size:16px;line-height:24px}
   .character-card{padding:14px}
   .card-head{flex-wrap:wrap}
-  .owned-row{flex-wrap:wrap}
+  .roster-actions{justify-content:flex-start;flex-wrap:wrap}
+  .roster-table .check{justify-content:flex-start}
+  .roster-detail>td{padding:0}
+  .roster-filters select{flex:1 1 140px}
   .party-table thead{display:none}
   .party-table,.party-table tbody,.party-table tr,.party-table td{display:block}
   .party-table tr{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;padding:8px 0;border-bottom:1px solid var(--line)}

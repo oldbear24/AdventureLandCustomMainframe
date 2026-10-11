@@ -223,3 +223,50 @@ test('tampering with a saved game session fails closed', async t => {
   await assert.rejects(new GameAccount(restarted, f.runtime).init(), /dešifrovat/);
   assert.equal(restarted.authCookie, '');
 });
+test('more characters can be saved than run; extra starts are refused, swapped in or skipped by Start all', async t => {
+  const f = await fixture(t); await f.login();
+  f.configuration.maxCharacters = 2;
+  const ids = [];
+  for (const name of ['One', 'Two', 'Three', 'Four', 'Five']) ids.push((await f.request('/api/characters', 'POST', { name, region: 'EU', server: 'I', autoStart: true })).data.id);
+  assert.equal(f.store.snapshot().characters.length, 5);
+  const dashboard = (await f.request('/api/dashboard')).data;
+  assert.equal(dashboard.config.maxCharacters, 2); assert.equal(dashboard.config.maxSaved, 50);
+  f.runtime.connect = async session => { session.context = { close: async () => {} }; session.page = { evaluate: async () => null }; session.status = 'running'; };
+  const batch = (await f.request('/api/characters/batch', 'POST', { action: 'start' })).data.results;
+  assert.deepEqual(batch.map(r => [r.name, r.ok, r.skipped, r.note]), [['One', true, false, null], ['Two', true, false, null], ['Three', true, true, 'není volné místo'], ['Four', true, true, 'není volné místo'], ['Five', true, true, 'není volné místo']]);
+  const refused = await f.request(`/api/characters/${ids[2]}/start`, 'POST', {});
+  assert.equal(refused.status, 409); assert.match(refused.data.error, /Není volné místo: běží už 2 z 2/);
+  // Swapping stops the chosen character, turns its autostart off and starts the other one.
+  assert.equal((await f.request(`/api/characters/${ids[2]}/swap`, 'POST', { replace: ids[0] })).status, 200);
+  assert.deepEqual([...f.runtime.sessions.keys()].sort(), [ids[1], ids[2]].sort());
+  assert.equal(f.store.snapshot().characters.find(c => c.id === ids[0]).autoStart, false);
+  assert.equal((await f.request(`/api/characters/${ids[3]}/swap`, 'POST', { replace: ids[0] })).status, 409, 'the replaced character must be running');
+  assert.equal((await f.request(`/api/characters/${ids[1]}/swap`, 'POST', { replace: ids[2] })).status, 409, 'the new character must be stopped');
+  // When the new character cannot start, the replaced one starts again.
+  f.runtime.resolveScript = async character => { if (character.name === 'Four') throw new Error('slot unreachable'); return null; };
+  const failed = await f.request(`/api/characters/${ids[3]}/swap`, 'POST', { replace: ids[1] });
+  assert.equal(failed.status, 502); assert.match(failed.data.error, /Stažení CODE/);
+  assert.deepEqual([...f.runtime.sessions.keys()].sort(), [ids[1], ids[2]].sort());
+  assert.equal(f.store.snapshot().characters.find(c => c.id === ids[1]).autoStart, true);
+});
+test('character order is saved and decides which autostart characters fit', async t => {
+  const f = await fixture(t); await f.login();
+  const ids = [];
+  for (const name of ['One', 'Two', 'Three']) ids.push((await f.request('/api/characters', 'POST', { name, region: 'EU', server: 'I', autoStart: true })).data.id);
+  assert.equal((await f.request('/api/characters/order', 'PUT', { ids: [ids[2], ids[0]] })).status, 409, 'every character must be listed');
+  assert.equal((await f.request('/api/characters/order', 'PUT', { ids: [ids[2], ids[0], ids[0]] })).status, 409);
+  assert.equal((await f.request('/api/characters/order', 'PUT', { ids: [ids[2], ids[0], ids[1]] })).status, 200);
+  assert.deepEqual(f.store.snapshot().characters.map(c => c.name), ['Three', 'One', 'Two']);
+  f.configuration.maxCharacters = 2;
+  f.runtime.connect = async session => { session.context = { close: async () => {} }; session.status = 'running'; };
+  f.runtime.resolveScript = async () => null;
+  await f.runtime.init();
+  assert.deepEqual([...f.runtime.sessions.keys()], [ids[2], ids[0]]);
+  assert.ok(f.runtime.logs.some(l => l.characterId === ids[1] && l.level === 'info' && /Autostart přeskočen: běží už 2 z 2/.test(l.message)));
+});
+test('the panel saves at most 50 characters', async t => {
+  const f = await fixture(t); await f.login();
+  await f.store.update(state => { for (let i = 0; i < 50; i++) state.characters.push({ id: crypto.randomUUID(), name: `Hero${i}`, region: 'EU', server: 'I', scriptId: null, autoStart: false }); });
+  const refused = await f.request('/api/characters', 'POST', { name: 'Extra', region: 'EU', server: 'I' });
+  assert.equal(refused.status, 409); assert.match(refused.data.error, /nejvýš 50/);
+});

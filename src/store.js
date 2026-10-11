@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { Script } from 'node:vm';
 import { z } from 'zod';
 
+// Saved characters are not limited by the game; only those running at once are (MAX_CHARACTERS).
+export const MAX_SAVED_CHARACTERS = 50;
 export const characterSchema = z.object({
   name: z.string().regex(/^[a-zA-Z0-9_]{1,32}$/),
   region: z.enum(['EU', 'US', 'ASIA']),
@@ -42,7 +44,7 @@ export const settingsSchema = z.object({
 }).strict();
 const stateSchema = z.object({
   version: z.literal(1),
-  characters: z.array(characterSchema.extend({ id: z.string().uuid(), controls: savedControlsSchema.optional() })),
+  characters: z.array(characterSchema.extend({ id: z.string().uuid(), controls: savedControlsSchema.optional() })).max(MAX_SAVED_CHARACTERS),
   scripts: z.array(savedScriptSchema),
   looks: z.record(z.string(), lookSchema).default({}),
   stands: z.record(z.string(), standSchema).default({}),

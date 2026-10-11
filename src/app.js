@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { characterSchema, controlKeySchema, controlValueSchema, scriptSchema, settingsSchema } from './store.js';
+import { MAX_SAVED_CHARACTERS, characterSchema, controlKeySchema, controlValueSchema, scriptSchema, settingsSchema } from './store.js';
 import { Transfers, inventoryView, transferSchema } from './transfers.js';
 import { aggregateItems, equipmentView, goldOf, itemsView, packsView } from './inventory.js';
 import { STORAGE_KEY_LIMIT, storageView } from './runtime.js';
@@ -355,7 +355,8 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.get('/api/dashboard', (req, res) => res.json({
     characters: store.snapshot().characters, looks: store.snapshot().looks, stands: store.snapshot().stands, scripts: store.snapshot().scripts.map(({ source, ...script }) => script),
     sessions: runtime.snapshot(), logs: req.query.logs === '0' ? undefined : runtime.logs,
-    config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters, notifications: runtime.notifier?.status() || { discord: false, telegram: false } },
+    lastSeen: runtime.history?.lastSeen() || {},
+    config: { authConfigured: !!config.authCookie, maxCharacters: config.maxCharacters, maxSaved: MAX_SAVED_CHARACTERS, notifications: runtime.notifier?.status() || { discord: false, telegram: false } },
     account: account?.status() || { configured: !!config.authCookie, source: config.authCookie ? 'environment' : 'none', email: null, signedInAt: null },
     gameApi: gameApi?.status() || { configured: false },
     uptime: Math.floor(process.uptime()), now: Date.now(),
@@ -369,7 +370,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   });
   // Start, stop, reload CODE, relog or move several characters at once; each character reports its own result.
   const batchSchema = z.object({
-    action: z.enum(['start', 'stop', 'reload', 'relog', 'move']), ids: z.array(z.uuid()).max(4).optional(),
+    action: z.enum(['start', 'stop', 'reload', 'relog', 'move']), ids: z.array(z.uuid()).max(MAX_SAVED_CHARACTERS).optional(),
     region: characterSchema.shape.region.optional(), server: characterSchema.shape.server.optional(),
   }).strict().refine(input => input.action !== 'move' || (input.region && input.server), 'Přesun vyžaduje region a server.');
   app.post('/api/characters/batch', async (req, res) => {
@@ -377,7 +378,7 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     const targets = store.snapshot().characters.filter(c => !input.ids || input.ids.includes(c.id));
     if (!targets.length) throw new HttpError(400, 'Žádná postava k provedení akce.');
     const results = [];
-    const report = (character, error = null, skipped = false) => results.push({ id: character.id, name: character.name, ok: !error, skipped, error: error ? runtime.redact(error.message || error) : null });
+    const report = (character, error = null, skipped = false, note = null) => results.push({ id: character.id, name: character.name, ok: !error, skipped, note, error: error ? runtime.redact(error.message || error) : null });
     const startAll = async list => {
       for (const character of list) {
         try { await runtime.start(character.id); report(character); } catch (error) { report(character, error); }
@@ -386,7 +387,11 @@ export function createApp(config, store, runtime, account = null, gameApi = null
     if (input.action === 'start') {
       const idle = targets.filter(c => !runtime.sessions.has(c.id));
       for (const character of targets.filter(c => runtime.sessions.has(c.id))) report(character, null, true);
-      await startAll(idle);
+      // Characters start in the list's order until every place for a running character is taken.
+      for (const character of idle) {
+        if (runtime.sessions.size >= config.maxCharacters) { report(character, null, true, 'není volné místo'); continue; }
+        try { await runtime.start(character.id); report(character); } catch (error) { report(character, error); }
+      }
     } else if (input.action === 'stop') {
       await runtime.exclusive(async () => {
         const ids = new Set(targets.map(c => c.id));
@@ -426,12 +431,29 @@ export function createApp(config, store, runtime, account = null, gameApi = null
   app.post('/api/characters', async (req, res) => {
     const input = characterSchema.parse(req.body);
     const character = await store.update(state => {
-      if (state.characters.length >= config.maxCharacters) throw new HttpError(409, 'Dosažen limit postav.');
+      if (state.characters.length >= MAX_SAVED_CHARACTERS) throw new HttpError(409, `Panel uloží nejvýš ${MAX_SAVED_CHARACTERS} postav.`);
       if (state.characters.some(c => c.name.toLowerCase() === input.name.toLowerCase())) throw new HttpError(409, 'Postava už je přidaná.');
       if (input.scriptId && !state.scripts.some(s => s.id === input.scriptId)) throw new HttpError(400, 'Skript neexistuje.');
       const result = { ...input, id: randomUUID() }; state.characters.push(result); return result;
     });
     res.status(201).json(character);
+  });
+  // The order of the list decides which characters autostart and Start all take first.
+  app.put('/api/characters/order', async (req, res) => {
+    const { ids } = z.object({ ids: z.array(z.uuid()).max(MAX_SAVED_CHARACTERS) }).strict().parse(req.body);
+    await store.update(state => {
+      const current = new Map(state.characters.map(c => [c.id, c]));
+      if (ids.length !== current.size || new Set(ids).size !== ids.length || ids.some(id => !current.has(id))) throw new HttpError(409, 'Seznam postav se mezitím změnil. Načti panel znovu.');
+      state.characters = ids.map(id => current.get(id));
+    });
+    res.json({ ok: true });
+  });
+  // Starts a stopped character in place of a running one; the replaced character's autostart is turned off like with Stop.
+  app.post('/api/characters/:id/swap', async (req, res) => {
+    const { replace } = z.object({ replace: z.uuid() }).strict().parse(req.body);
+    await runtime.swap(req.params.id, replace);
+    await store.update(state => { const c = state.characters.find(c => c.id === replace); if (c) c.autoStart = false; });
+    res.json({ ok: true });
   });
   app.put('/api/characters/:id', async (req, res) => {
     const input = characterSchema.parse(req.body);

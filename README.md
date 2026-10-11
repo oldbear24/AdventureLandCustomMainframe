@@ -28,7 +28,8 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 
 ## Co umí
 
-- Správa až 4 postav: region, server, přiřazený skript, start, stop, opětovné načtení CODE.
+- Správa až 50 uložených postav, z nichž najednou běží nejvýš `MAX_CHARACTERS` (1–4, výchozí 4, víc hra nedovolí): region, server, přiřazený skript, start, stop, opětovné načtení CODE. Postavy navíc není potřeba mazat, čekají v záloze.
+- **Přehled postav** (`/`): nahoře **Aktivní** postavy (běžící, startující a obnovující se) jako kompaktní tabulka – stav, třída a level, server, mapa, HP/MP, XP/h, gold/h, zlato, stav CODE a upozornění; **▾ Detail** rozbalí pod řádkem celou kartu postavy (lektvary, efekty, cooldowny, Poslat, Úložiště, odkazy). Přepínač **Tabulka / Karty** ukáže místo tabulky karty jako dřív; volba se pamatuje v prohlížeči. Pod nimi je **V záloze**: uložené postavy, které neběží, s třídou a levelem z API tokenu, serverem, CODE, přepínačem autostartu a časem, kdy naposledy běžely (z Deníku), s hledáním a filtrem podle třídy a serveru. Dokud je volné místo, má postava tlačítko **▶ Start**. Když jsou všechna místa obsazená, má tlačítko **⇄ Vyměnit**: vybereš běžící postavu, panel ji zastaví (vypne jí autostart jako Stop) a spustí tu ze zálohy; když se nová postava spustit nepodaří, původní se spustí znovu. Šipky ↑↓ mění pořadí postav, které rozhoduje, které se při autostartu a **Spustit vše** spustí první. S API tokenem se v záloze ukážou i postavy účtu, které v panelu ještě nejsou (**MIMO PANEL**), s tlačítky **+ Přidat do panelu** a **+ Přidat všechny z účtu**.
 - Společné uložené CODE sloty s prohlížečem: automatické načítání změn přibližně každých 30 sekund (včetně modulů načtených přes `require_code`/`load_code`) a ukládání z panelu do stejného herního slotu. Místní skripty slouží jako návrhy.
 - Stav postav, HP/MP, level, mapa, gold, stav CODE a živé herní/CODE logy (nové záznamy přicházejí okamžitě přes WebSocket `/api/live`; při výpadku spojení se načítají s obnovou každých 5 sekund).
 - Kontrola vlastnictví a online stavu před připojením. Automatické opakování při výpadku s prodlevou 10 sekund až 5 minut.
@@ -53,7 +54,7 @@ Viditelnost GHCR balíčku je samostatné nastavení GitHubu: nově publikovaný
 - **Efekty, zásoby a cooldowny**: aktivní buffy a debuffy, počet lektvarů HP/MP, volná místa v inventáři a odpočet cooldownů použitých skillů (rozbalovací část karty).
 - **Party přehled**: kdo je v partě, na jakém serveru, na jaké mapě a jak daleko od leadera; vzdálenosti mezi postavami v panelu a varování, když běží na různých serverech.
 - **Detekce zamrzlého CODE**: postava bez pohybu, útoku, skillu, XP i změny zlata po nastavenou dobu je označená jako nečinná; volitelně se jí CODE automaticky znovu načte (↻ CODE).
-- **Dávkové akce**: Spustit vše, Zastavit vše, ↻ CODE vše (znovu načte CODE všech připojených postav), ⟳ Relog vše (běžící postavy se odhlásí a znovu přihlásí, autostart zůstává) a přesun vybraných postav na jiný server (běžící se zastaví, přesunou a znovu spustí).
+- **Dávkové akce**: Spustit vše (podle pořadí, dokud jsou volná místa; ostatní ohlásí „není volné místo“), Zastavit vše, ↻ CODE vše (znovu načte CODE všech připojených postav), ⟳ Relog vše (běžící postavy se odhlásí a znovu přihlásí, autostart zůstává) a přesun vybraných postav na jiný server (běžící se zastaví, přesunou a znovu spustí).
 - Ruční posílání zlata a předmětů z běžící postavy s náhledem, kontrolou inventáře a potvrzením výsledku od hry.
 - Atomické ukládání postav, skriptů a nastavení do Docker volume (`state.json`) a historie statistik a deníku (`history.json`, ukládá se nejvýš jednou za 30 sekund a při vypnutí); logy zůstávají v paměti (nejvýše 200 záznamů, panel je posuvný). Poškozený `history.json` se přejmenuje a historie začne znovu, panel kvůli němu nepřestane startovat.
 
@@ -180,7 +181,7 @@ Pokud proxy běží v jiném kontejneru, její `127.0.0.1` není hostitel: přip
 3. Přidej postavu přesným jménem. Nastav region, aktuální jméno serveru z výběru ve hře (například `EU` + `I`) a skript.
 4. Pokud chceš obnovu po restartu serveru, zapni autostart. Přidání postavu okamžitě nespouští.
 5. Odpoj ji z původního prohlížeče / herního Mainframu a stiskni **Start**.
-6. Sleduj skutečný stav připojení na kartě a logy. Při nesprávné cookie, chybě serveru nebo výpadku uvidíš důvod a runtime pokus zopakuje.
+6. Sleduj skutečný stav připojení mezi aktivními postavami a v logech. Při nesprávné cookie, chybě serveru nebo výpadku uvidíš důvod a runtime pokus zopakuje.
 7. Uložená změna slotu z prohlížeče se načte automaticky. Uložení propojeného skriptu v panelu zapíše herní slot a rovnou aktualizuje místní běh. **↻ CODE** vynutí nové načtení. Konfiguraci postavy měň po zastavení.
 
 Bez přiřazeného skriptu se postava připojí a zůstane bez aktivního CODE. Projekt automaticky nevybírá strategii farmení.
@@ -201,9 +202,9 @@ Původní místní skripty zůstávají jako návrhy; před dalším spuštění
 
 ## API token a seznam postav
 
-V Adventure Land otevři Mainframe → **Connect an AI** → vytvoř nebo zobraz token. V našem panelu otevři **Herní účet** → **API token — Connect an AI / MCP** a vlož ho tam. Token neposílej do chatu ani do veřejného repozitáře. Při připojení ho server ověří přes oficiální JSON API a načte seznam postav. Tlačítko **Načíst seznam** obnovuje seznam ručně; nepoužívá rychlé opakované dotazování API.
+V Adventure Land otevři Mainframe → **Connect an AI** → vytvoř nebo zobraz token. V našem panelu otevři **Herní účet** → **API token — Connect an AI / MCP** a vlož ho tam. Token neposílej do chatu ani do veřejného repozitáře. Při připojení ho server ověří přes oficiální JSON API a načte seznam postav. Stránka Postavy ho obnovuje nejvýš jednou za minutu, tlačítko **↻ Postavy účtu** ručně; nepoužívá rychlé opakované dotazování API.
 
-U postavy zvol **Přidat do panelu**, nastav region, server a svůj skript. Načtení seznamu samo žádnou postavu nespouští.
+Postavy účtu, které v panelu ještě nejsou, se ukážou v záloze na stránce Postavy. U postavy zvol **+ Přidat do panelu** a nastav region, server a svůj skript, nebo **+ Přidat všechny z účtu** přidá všechny najednou se serverem z účtu a výchozím CODE postavy. Načtení seznamu samo žádnou postavu nespouští.
 
 Volba CODE **Vždy výchozí CODE postavy (poslední verze)** (předvolená u nově přidaných postav) při každém startu, restartu serveru, relogu i reconnectu znovu najde ve hře aktuální výchozí CODE slot postavy a stáhne jeho poslední verzi. Výběr zůstává uložený jako automatický, takže změna výchozího slotu ve hře se projeví při dalším startu. Pokud vybereš konkrétní herní slot, stáhne se před každým startem a reconnectem poslední verze právě tohoto slotu. Token a herní přihlášení jsou nezávislé: token slouží pro výpis a společné CODE sloty, herní relace pro vlastní běh postav. Používej obojí ze stejného herního účtu. Vlastnictví se před spuštěním ověřuje také vůči herní relaci, takže token jiného účtu nedovolí spustit jeho postavu přes tuto relaci.
 

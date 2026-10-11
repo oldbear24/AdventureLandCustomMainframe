@@ -135,6 +135,13 @@ export class History extends EventEmitter {
     this.samples.set(id, entry); this.scheduleSave();
     return true;
   }
+  // When each character was last seen running: its last sample or its last start, connection or stop.
+  lastSeen() {
+    const seen = {};
+    for (const [id, entry] of this.samples) seen[id] = entry.points.at(-1)[0];
+    for (const e of this.journal) if (e.characterId && ['start', 'connected', 'disconnected', 'stop'].includes(e.type) && !(seen[e.characterId] >= e.at)) seen[e.characterId] = e.at;
+    return seen;
+  }
   // Newest first. after returns entries newer than an id (for polling); before pages back.
   query({ types = null, characterId = null, realm = null, before = null, after = null, limit = 100 } = {}) {
     const matches = e => (!types || types.includes(e.type)) && (!characterId || e.characterId === characterId) && (!realm || e.realm === realm) &&
